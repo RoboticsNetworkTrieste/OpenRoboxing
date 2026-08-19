@@ -1,0 +1,31 @@
+/* ── Shape ──────────────────────────────────────────────────────
+   High-end robotics geometry: machined, square, precise.
+   Nothing is soft. Radii exist only to take the raw edge off a
+   1px corner — they are never a styling gesture.
+   The one exception is the delivered app tile (22%), which is
+   part of the logo system and must not be squared. */
+:root{
+  --radius-xs:0px;
+  --radius-sm:1px;
+  --radius-md:2px;    /* controls: buttons, inputs */
+  --radius-lg:3px;    /* canonical panel / plate radius */
+  --radius-xl:4px;
+  --radius-2xl:6px;
+  --radius-tile:22%;  /* logo app tile only */
+  --radius-pill:999px;/* status pills only — never buttons */
+  --radius-circle:50%;
+
+  --border-hairline:1px;
+  --border-line:1.5px;   /* the weight used in the brand elements */
+  --border-heavy:2px;
+  --stroke-icon:1.75px;  /* icons run one notch finer than Lucide default */
+  --stroke-diagram:1.5px;
+  --focus-ring-w:1px;
+  --focus-ring-offset:2px;
+
+  /* Annotation system — HUD brackets and measurement ticks */
+  --hud-bracket:14px;    /* corner bracket arm length */
+  --tick-pitch:8px;      /* measurement tick spacing */
+  --tick-h:6px;          /* minor tick height */
+  --tick-h-major:11px;   /* every 5th tick */
+}

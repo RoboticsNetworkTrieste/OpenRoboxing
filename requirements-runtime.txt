@@ -1,0 +1,48 @@
+# What a match needs, and nothing else (M4-T3).
+#
+# MEASURED, not guessed. Produced by importing the whole match runtime *including* building a
+# MotionBricksGenerator, then listing every third-party top-level module that ended up in
+# sys.modules. Re-derive with:
+#
+#   python -c "import sys; from openroboxing.runtime.generator import MotionBricksGenerator; \
+#              MotionBricksGenerator(); print(sorted({m.split('.')[0] for m in sys.modules}))"
+#
+# NOT included, on purpose: Isaac Lab, trl, accelerate and wandb. Those are the Studio finetune
+# track's (S-T2) and run on TORC hardware, not on a laptop hosting a match. `check_environment.py`
+# reporting them missing is expected.
+#
+# NOT included, and cannot be: the GEAR-SONIC policy checkpoints. They are NVIDIA-licensed and
+# redistributing them is WORKPLAN M6-T2's blocking question, not a line in a requirements file.
+
+# -- simulation and control ------------------------------------------------------------------------
+mujoco>=3.2            # physics, offscreen rendering, MjSpec (the arena is composed, not a file)
+onnxruntime            # GEAR-SONIC encoder + decoder
+numpy
+scipy
+
+# -- the generator ---------------------------------------------------------------------------------
+# MotionBricks itself is in-repo. These are what it imports.
+torch
+pytorch-lightning      # pulls lightning-fabric, lightning-utilities, torchmetrics
+hydra-core             # pulls omegaconf, antlr4-python3-runtime
+transformers           # pulls tokenizers, safetensors, huggingface-hub, regex
+einops
+einx
+vector-quantize-pytorch
+
+# -- the match host and client ---------------------------------------------------------------------
+aiohttp                # websockets + static files; already the only web dependency
+pillow                 # JPEG encoding for the streamed ring
+
+# -- rendering and reporting -------------------------------------------------------------------------
+PyOpenGL               # MuJoCo's EGL backend
+matplotlib             # used by MotionBricks' own utilities
+rich                   # env_report and MotionBricks logging
+colorlog
+tqdm
+
+# -- optional --------------------------------------------------------------------------------------
+# pynput is imported at module scope by MotionBricks' demo controllers and needs an X display.
+# `runtime/generator.py` stubs it when it is absent, so a headless host does not need it. Install it
+# only if you intend to run the upstream interactive demo.
+# pynput

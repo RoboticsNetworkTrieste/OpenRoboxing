@@ -1,0 +1,263 @@
+/* The Pose Studio (S-T1), built to spec/ui-design-guide/ screen 03.
+ *
+ * A technical surface: the `schematic` ground, three columns divided by hairlines, and the only
+ * mouse-driven page in the project. Tokens come from client/tokens/. */
+
+body {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-size: var(--text-sm);
+}
+
+.push { margin-left: auto; }
+.hidden { display: none !important; }
+.centre { text-align: center; }
+.hairline { height: 1px; background: var(--border-subtle); }
+
+.footnote {
+  display: block;
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-4xs);
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ---- header --------------------------------------------------------------------------------------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  height: 64px;
+  flex-shrink: 0;
+  padding: 0 var(--space-6);
+  background: var(--surface-header);
+  border-bottom: var(--border-hairline) solid var(--border-subtle);
+}
+.brand {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--ls-hud);
+  text-transform: uppercase;
+  color: var(--text-body);
+}
+.v-divider { width: 1px; height: 22px; background: var(--border-subtle); }
+
+.pose-name {
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+  background: transparent;
+  border: var(--border-hairline) solid transparent;
+  border-radius: var(--radius-md);
+  padding: 4px 8px;
+  width: 260px;
+}
+.pose-name:hover { border-color: var(--border-subtle); background: var(--surface-glass); }
+.pose-name:focus { border-color: var(--border-accent); background: var(--surface-glass); outline: none; }
+
+.chip {
+  font-family: var(--font-mono);
+  font-size: var(--text-4xs);
+  letter-spacing: var(--ls-kicker);
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+}
+/* Clay is the second temperature: a surface note, never a status and never an action. */
+.chip-secondary { background: var(--secondary-quiet); color: var(--secondary); }
+
+/* ---- body ------------------------------------------------------------------------------------------ */
+.body {
+  display: grid;
+  grid-template-columns: 420px minmax(0, 1fr) 380px;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+.rail { padding: var(--space-5); display: flex; flex-direction: column; gap: 18px; min-height: 0; }
+.joints { border-right: var(--border-hairline) solid var(--border-subtle); overflow-y: auto; }
+.right { border-left: var(--border-hairline) solid var(--border-subtle); gap: var(--space-5); }
+.rail-head { display: flex; align-items: baseline; gap: var(--space-3); }
+
+/* ---- the sliders ------------------------------------------------------------------------------------
+   Grouped the way an author thinks about them, not the way MuJoCo orders them. */
+.group + .group { margin-top: 18px; }
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: var(--space-2);
+  border-bottom: var(--border-hairline) solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  letter-spacing: var(--ls-kicker);
+  text-transform: uppercase;
+  color: var(--text-body);
+  width: 100%;
+  background: none;
+  border-top: 0; border-left: 0; border-right: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.group-head[aria-expanded="false"] { color: var(--text-secondary); padding-top: 11px; border-top: var(--border-hairline) solid var(--border-subtle); }
+.group-body { display: flex; flex-direction: column; gap: var(--space-3); margin-top: var(--space-3); }
+.group-head[aria-expanded="false"] + .group-body { display: none; }
+
+.row-head {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--text-secondary);
+}
+.row-head .value { color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.row.out .value { color: var(--status-warn); }
+
+/* 4px track, accent fill to the thumb, 12px square thumb. The fill is a gradient stop driven by
+   --fill, which the input handler sets — there is no second element to keep in step. */
+.row input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 12px;
+  margin: 7px 0 0;
+  background: transparent;
+  cursor: pointer;
+}
+.row input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(to right, var(--accent) 0 var(--fill, 50%), var(--surface-3) var(--fill, 50%));
+}
+.row input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(to right, var(--accent) 0 var(--fill, 50%), var(--surface-3) var(--fill, 50%));
+}
+.row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px; height: 12px;
+  margin-top: -4px;
+  border-radius: var(--radius-md);
+  background: var(--torc-mist-100);
+  border: var(--border-hairline) solid var(--border-strong);
+}
+.row input[type="range"]::-moz-range-thumb {
+  width: 12px; height: 12px;
+  border-radius: var(--radius-md);
+  background: var(--torc-mist-100);
+  border: var(--border-hairline) solid var(--border-strong);
+}
+.row.out input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, var(--status-warn) 0 var(--fill, 50%), var(--surface-3) var(--fill, 50%));
+}
+.row.out input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, var(--status-warn) 0 var(--fill, 50%), var(--surface-3) var(--fill, 50%));
+}
+.row.out input[type="range"]::-webkit-slider-thumb { border-color: var(--status-warn); }
+.row.out input[type="range"]::-moz-range-thumb { border-color: var(--status-warn); }
+
+/* ---- the preview ------------------------------------------------------------------------------------ */
+.preview { padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; }
+.plate {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-page-deep);
+  border: var(--border-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.plate img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.plate img:not([src]) { display: none; }
+.plate-index { position: absolute; top: 10px; left: 12px; color: var(--accent); }
+.plate-empty { color: var(--text-muted); font-family: var(--font-mono); font-size: var(--text-3xs); letter-spacing: var(--ls-hud); text-transform: uppercase; }
+.plate figcaption { position: absolute; left: 12px; bottom: 10px; }
+
+/* ---- the right rail ---------------------------------------------------------------------------------- */
+.horizon-figure { display: flex; align-items: baseline; gap: var(--space-3); margin-top: 10px; }
+.horizon-value {
+  font-family: var(--font-display);
+  font-size: 36px;
+  font-weight: var(--fw-bold);
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.horizon-seconds {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-accent);
+  font-variant-numeric: tabular-nums;
+}
+.horizon-strip { display: flex; gap: 3px; margin-top: var(--space-3); }
+.horizon-strip button {
+  flex: 1;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: var(--surface-3);
+  cursor: pointer;
+}
+.horizon-strip button.on { background: var(--accent); opacity: .9; }
+.horizon-strip button:disabled { cursor: not-allowed; opacity: .35; }
+
+.reach-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: var(--border-hairline) solid var(--border-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-body);
+  font-variant-numeric: tabular-nums;
+}
+.reach-row:last-child { border-bottom: 0; }
+
+.alert {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+  border-left: var(--border-heavy) solid var(--border-strong);
+  background: var(--surface-glass);
+  color: var(--text-secondary);
+}
+.alert[data-tone="warn"] { background: var(--status-warn-quiet); border-left-color: var(--status-warn); color: var(--status-warn-quiet-fg); }
+.alert[data-tone="danger"] { background: var(--status-danger-quiet); border-left-color: var(--status-danger); color: var(--status-danger-quiet-fg); }
+.alert[data-tone="ok"] { background: var(--status-ok-quiet); border-left-color: var(--status-ok); color: var(--status-ok-quiet-fg); }
+
+/* ---- actions ------------------------------------------------------------------------------------------ */
+.actions { display: flex; flex-direction: column; gap: var(--space-2); margin-top: auto; }
+.btn {
+  height: var(--control-h-md);
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: var(--ls-kicker);
+  text-transform: uppercase;
+  border-radius: var(--radius-md);
+  border: var(--border-hairline) solid transparent;
+  cursor: pointer;
+  transition: var(--transition-control);
+}
+.btn-primary { background: var(--accent); color: var(--text-on-accent); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn-secondary { background: var(--surface-3); color: var(--text-body); border-color: var(--border-strong); }
+.btn-secondary:hover { background: var(--surface-2); border-color: var(--border-accent); }
+.btn-ghost { background: transparent; color: var(--text-secondary); border-color: var(--border-subtle); }
+.btn-ghost:hover { background: var(--surface-glass); }
+.btn:active { filter: brightness(.92); }
+.btn:disabled { opacity: .42; cursor: not-allowed; }

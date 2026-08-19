@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openroboxing"
+version = "0.1.0"
+description = "A boxing game for the Unitree G1, built on GEAR-SONIC and MotionBricks"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+# Runtime dependencies are measured, not guessed: see requirements-runtime.txt and its header.
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements-runtime.txt"] }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+openroboxing = [
+    "client/**/*",
+    "poses/**/*.json",
+    "poses/**/*.png",
+    "spec/**/*.md",
+    "spec/**/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `slow` covers end-to-end runs that build the generator; deselected by default.
+markers = ["slow: end-to-end runs that build the generator (deselect with -m 'not slow')"]
+addopts = "-m 'not slow'"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]

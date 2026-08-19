@@ -1,0 +1,99 @@
+/* ── TORC palette ───────────────────────────────────────────────
+   Every value below is lifted from the delivered logo/element SVGs
+   or built as a tonal step inside that same green-tinted family.
+   TORC is a TWO-GROUND identity: ink is the operator ground (hardware,
+   heroes, dashboards, section breaks); paper is the reading ground
+   (docs, site body, content slides). Neither is a "theme override" of
+   the other — pick the one that matches the job. */
+:root{
+  /* Ink — green-tinted carbon. The brand's ground. */
+  --torc-ink-950:#050D0A;   /* deepest, full-bleed page ground */
+  --torc-ink-900:#08130F;   /* favicon / trace ground — canonical "black" */
+  --torc-ink-850:#0C1A14;   /* duotone stripe dark */
+  --torc-ink-800:#101E18;   /* surface: cards, panels */
+  --torc-ink-700:#16281F;   /* raised surface, hover fill */
+  --torc-ink-600:#1E3529;   /* strong border, inset fill */
+  --torc-ink-500:#2C4A3C;   /* hairline+, muted diagram line */
+
+  /* Sage — muted foreground steps for dark ground */
+  --torc-sage-600:#4A6E5C;
+  --torc-sage-500:#6E8C7E;  /* tertiary text on ink */
+  --torc-sage-400:#93AC9E;
+  --torc-sage-300:#B7C9BE;  /* secondary text on ink */
+
+  /* Mist — light end (belongs to the ink ground) */
+  --torc-mist-100:#EAF2ED;  /* logo light ink — primary text on ink */
+  --torc-mist-050:#F2F7F4;  /* mist tint — panels ON ink, not a page ground */
+  --torc-white:#FFFFFF;
+
+  /* Paper — warm neutral light ground. Concrete and drawing paper, never
+     white and never green-tinted: it has to sit next to ink without
+     turning cold. This is the reading half of the system. */
+  --torc-paper-050:#F8F7F3;  /* raised card on paper */
+  --torc-paper-100:#EFEDE6;  /* DEFAULT paper page ground */
+  --torc-paper-200:#E5E2D9;  /* inset, track, table stripe */
+  --torc-paper-300:#D5D1C4;  /* border on paper */
+  --torc-paper-400:#B6B1A0;  /* strong border, muted rule */
+
+  /* Clay — the warm secondary. A second temperature so section heads,
+     callouts and hero moments differ from body without shouting.
+     Surfaces, rules and punctuation only — NEVER a status colour. */
+  --torc-clay-100:#F2E4D8;   /* tinted surface on paper */
+  --torc-clay-300:#DDAE86;   /* secondary on ink */
+  --torc-clay-500:#BC7B4C;   /* secondary on paper */
+  --torc-clay-700:#8C5430;
+  --torc-clay-900:#332014;   /* clay-tinted surface on ink */
+
+  /* Deep ink for light ground (logo, wordmark-light) */
+  --torc-forest-900:#0F231B;
+  --torc-forest-700:#1C3A2D;
+
+  /* Torque green — the one accent */
+  --torc-green-200:#A6EBD2;
+  --torc-green-300:#7BE0BC;  /* hover on ink */
+  --torc-green-400:#4FD1A0;  /* ACCENT on dark ground */
+  --torc-green-500:#2FB98A;  /* ACCENT on light ground */
+  --torc-green-600:#219B72;  /* pressed */
+  --torc-green-700:#177A59;
+  --torc-green-800:#12654A;  /* accent as TEXT on paper — 4.5:1 on paper-100 */
+  --torc-green-900:#0E3A2B;  /* accent-tinted surface on ink */
+
+  /* Signals — instrument LEDs. Crisp and unmistakable against ink,
+     deliberately far from the accent hue so status never reads as brand. */
+  --torc-blue-400:#3FA9F5;   /* info */
+  --torc-blue-600:#1E7FC4;
+  --torc-blue-900:#0A2439;
+  --torc-amber-400:#FFB020;  /* warning */
+  --torc-amber-600:#C88300;
+  --torc-amber-900:#3A2705;
+  --torc-red-400:#FF5247;    /* danger */
+  --torc-red-600:#D32A1F;
+  --torc-red-900:#3B1310;
+
+  /* Alphas — hairlines, scrims, glows. Never hardcode rgba() in a design. */
+  --torc-alpha-line:rgba(234,242,237,.08);      /* default hairline on ink */
+  --torc-alpha-line-strong:rgba(234,242,237,.16);
+  --torc-alpha-grid:rgba(234,242,237,.06);      /* blueprint grid stroke */
+  --torc-alpha-tick:rgba(234,242,237,.22);      /* measurement ticks */
+  --torc-alpha-hud:rgba(234,242,237,.28);       /* HUD corner brackets */
+  --torc-alpha-fill:rgba(234,242,237,.04);      /* glass fill on ink */
+  --torc-alpha-fill-hover:rgba(234,242,237,.07);
+  --torc-alpha-accent-12:rgba(79,209,160,.12);
+  --torc-alpha-accent-24:rgba(79,209,160,.24);
+  --torc-alpha-accent-40:rgba(79,209,160,.40);
+  --torc-alpha-ink-60:rgba(8,19,15,.60);        /* scrim over imagery */
+  --torc-alpha-ink-88:rgba(8,19,15,.88);        /* sticky header scrim */
+  /* Paper-ground alphas — deep forest ink, one step stronger than their
+     ink-ground twins because light grounds swallow hairlines. */
+  --torc-alpha-line-paper:rgba(15,35,27,.14);
+  --torc-alpha-line-paper-strong:rgba(15,35,27,.26);
+  --torc-alpha-grid-paper:rgba(15,35,27,.055);
+  --torc-alpha-tick-paper:rgba(15,35,27,.34);
+  --torc-alpha-hud-paper:rgba(15,35,27,.36);
+  --torc-alpha-fill-paper:rgba(15,35,27,.035);
+  --torc-alpha-fill-paper-hover:rgba(15,35,27,.065);
+  --torc-alpha-paper-72:rgba(239,237,230,.72);  /* scrim over imagery on paper */
+  --torc-alpha-paper-90:rgba(239,237,230,.90);  /* sticky header scrim on paper */
+  --torc-alpha-clay-12:rgba(188,123,76,.12);
+  --torc-alpha-clay-28:rgba(188,123,76,.28);
+}

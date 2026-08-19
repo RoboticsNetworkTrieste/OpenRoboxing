@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <!-- Stand-in for the delivered TORC `schematic` field: PCB traces that run orthogonally and break
+       at 45 degrees, with via pads where they turn. -->
+  <g fill="none" stroke="rgba(234,242,237,.05)" stroke-width="1.5" stroke-linejoin="round">
+    <path d="M-40 180H320l120 120h380l100-100h520l140 140h420"/>
+    <path d="M-40 430H240l160 160h300l120-120h700"/>
+    <path d="M-40 720H420l140-140h520l120 120h360l140 140h300"/>
+    <path d="M-40 960H520l160-160h420l120 120h740"/>
+    <path d="M300 -40v180l120 120v340l-140 140v380"/>
+    <path d="M1180 -40v240l-120 120v300l140 140v360"/>
+    <path d="M1640 -40v300l120 120v260l-140 140v340"/>
+  </g>
+  <g fill="rgba(234,242,237,.06)">
+    <circle cx="440" cy="300" r="5"/><circle cx="820" cy="300" r="5"/>
+    <circle cx="400" cy="590" r="5"/><circle cx="700" cy="590" r="5"/>
+    <circle cx="560" cy="580" r="5"/><circle cx="1080" cy="580" r="5"/>
+    <circle cx="1200" cy="700" r="5"/><circle cx="1560" cy="700" r="5"/>
+    <circle cx="1060" cy="360" r="5"/><circle cx="1760" cy="380" r="5"/>
+  </g>
+</svg>

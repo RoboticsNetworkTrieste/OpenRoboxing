@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+# ruff writes a self-ignoring .gitignore inside this one, so it stays out of `git status` on its
+# own. Named here anyway: lint.sh ships with the repo, so every checkout grows one, and keeping it
+# out should be our decision rather than a tool's internal detail we happen to be relying on.
+.ruff_cache/
+
+# Environments — the install script builds .venv_mb; it is never committed.
+.venv*/
+
+# Runtime output
+matches/
+seasons/
+captures/
+renders/
+*.log
+
+# The policy checkpoints are fetched by install.sh from nvidia/GEAR-SONIC.
+# They live in the submodule, but guard against a stray copy landing here.
+*.onnx
+*.ckpt

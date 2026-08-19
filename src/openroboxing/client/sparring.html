@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRoboxing — Sparring</title>
+<!-- The TORC token sheets, as index.html loads them. Design against the semantic aliases. -->
+<link rel="icon" href="/static/assets/torc-icon-dark.svg">
+<link rel="stylesheet" href="/static/tokens/colors.css">
+<link rel="stylesheet" href="/static/tokens/typography.css">
+<link rel="stylesheet" href="/static/tokens/spacing.css">
+<link rel="stylesheet" href="/static/tokens/shape.css">
+<link rel="stylesheet" href="/static/tokens/elevation.css">
+<link rel="stylesheet" href="/static/tokens/motion.css">
+<link rel="stylesheet" href="/static/tokens/semantic.css">
+<link rel="stylesheet" href="/static/tokens/base.css">
+<link rel="stylesheet" href="/static/tokens/backgrounds.css">
+<link rel="stylesheet" href="/static/sparring.css">
+</head>
+<body class="torc-field" data-field="schematic" data-field-depth="open" data-instrument="quiet">
+
+<header class="topbar">
+  <span class="brand">OpenRoboxing</span>
+  <span class="torc-kicker">sparring bench</span>
+  <span class="machine-chip" id="machine-chip" data-state="OPENING">OPENING</span>
+  <span class="torc-hud-label" id="tick-line">tick —</span>
+  <div class="top-actions">
+    <button id="btn-pause" class="action" title="P">pause</button>
+    <button id="btn-reset" class="action" title="R">reset</button>
+    <input id="reset-seed" class="seed" type="number" value="1234" title="reset seed">
+    <a id="btn-npz" class="action ghostlink" href="/api/session.npz" download>session.npz</a>
+  </div>
+  <span class="torc-hud-label push" id="status"><span class="status-dot"></span>connecting</span>
+</header>
+
+<main class="grid">
+
+  <!-- ── the ring ─────────────────────────────────────────────────────────────── -->
+  <section class="card arena torc-hud">
+    <div class="plate-label">
+      <span class="torc-hud-label accent">fig. 01</span>
+      <span class="torc-hud-label">free space · G1 + sacco · plan ghost leads by 0.9 s</span>
+      <span class="torc-hud-label push" id="mode-line">LIVE</span>
+    </div>
+    <div class="canvas-box">
+      <canvas id="ring"></canvas>
+      <svg class="arena-overlay" id="arena-overlay" aria-hidden="true"></svg>
+    </div>
+    <div class="legend">
+      <span class="torc-hud-label legend-item"><span class="sw sw-red"></span>robot · GEAR-SONIC under physics</span>
+      <span class="torc-hud-label legend-item"><span class="sw sw-aim"></span>aim ghost · yours</span>
+      <span class="torc-hud-label legend-item"><span class="sw sw-plan"></span>plan ghost · what the encoder chases</span>
+      <span class="torc-hud-label legend-item"><span class="sw sw-trail"></span>trail · plan tail</span>
+    </div>
+  </section>
+
+  <!-- ── right column ─────────────────────────────────────────────────────────── -->
+  <aside class="column">
+
+    <section class="card">
+      <div class="card-head"><span class="torc-kicker">loadout</span>
+        <span class="torc-hud-label push">1–6 stage · WASD aim · SPACE commit · Q clear</span></div>
+      <div class="loadout" id="loadout"></div>
+      <div class="error" id="error" hidden></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><span class="torc-kicker">queue</span>
+        <span class="torc-hud-label push" id="queue-note">0 of 10 · no cancellation</span></div>
+      <div class="queue" id="queue"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><span class="torc-kicker">knobs</span>
+        <span class="torc-hud-label push">deviations in clay</span></div>
+      <div class="knobs" id="knobs"></div>
+      <div class="bench-toggles">
+        <label class="torc-hud-label"><input type="checkbox" id="tgl-fall"> pause on fall</label>
+        <label class="torc-hud-label"><input type="checkbox" id="tgl-heat"> error heatmap</label>
+        <label class="torc-hud-label"><input type="checkbox" id="tgl-plan" checked> plan ghost</label>
+        <label class="torc-hud-label"><input type="checkbox" id="tgl-trail" checked> trail</label>
+        <button class="action" id="btn-teleport">teleport sacco…</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><span class="torc-kicker">script</span>
+        <div class="push">
+          <button class="action" id="btn-script-run">run</button>
+          <button class="action" id="btn-script-stop" disabled>stop</button>
+          <button class="action" id="btn-script-save">save</button>
+          <button class="action" id="btn-script-load">load</button>
+        </div></div>
+      <textarea id="script" class="script" spellcheck="false"
+        placeholder='[{"slot": "1", "x": 1.2, "y": -0.4, "heading": 1.57},
+ {"slot": "2", "x": 0.5, "y": 0.5, "heading": 0, "at_tick": 500}]'></textarea>
+      <div class="torc-hud-label" id="script-note">not running</div>
+    </section>
+
+  </aside>
+
+  <!-- ── bottom strip: scrubber + traces ──────────────────────────────────────── -->
+  <section class="card wide torc-hud">
+    <div class="card-head">
+      <span class="torc-kicker">session</span>
+      <button class="action" id="btn-live">LIVE</button>
+      <input type="range" id="scrubber" min="0" max="0" value="0" step="1">
+      <span class="torc-hud-label" id="scrub-line">— / —</span>
+      <span class="torc-hud-label push" id="head-line"></span>
+    </div>
+    <div id="charts" class="charts"></div>
+  </section>
+
+</main>
+
+<script type="module" src="/static/sparring.js"></script>
+</body>
+</html>

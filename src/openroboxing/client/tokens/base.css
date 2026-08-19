@@ -1,0 +1,55 @@
+/* ── Base & brand utilities ─────────────────────────────────────
+   Element defaults + the handful of brand backgrounds that would
+   otherwise be re-invented in every design. */
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg-page);color:var(--text-body);font-family:var(--font-sans);font-size:var(--text-md);line-height:var(--lh-relaxed);font-weight:var(--fw-regular);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+h1,h2,h3,h4,h5{font-family:var(--font-display);font-weight:var(--fw-semibold);color:var(--text-strong);margin:0;text-wrap:balance}
+h1{font-size:var(--text-4xl);line-height:var(--lh-tight);letter-spacing:var(--ls-display)}
+h2{font-size:var(--text-2xl);line-height:var(--lh-snug);letter-spacing:var(--ls-heading)}
+h3{font-size:var(--text-xl);line-height:var(--lh-snug);letter-spacing:var(--ls-heading)}
+h4{font-size:var(--text-lg);line-height:var(--lh-normal);letter-spacing:var(--ls-heading)}
+h5{font-size:var(--text-md);line-height:var(--lh-normal)}
+p{margin:0;text-wrap:pretty}
+a{color:var(--text-link);text-decoration:none;text-underline-offset:3px;transition:color var(--dur-fast) var(--ease-standard)}
+a:hover{color:var(--text-link-hover);text-decoration:underline}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:var(--focus-ring-w) solid var(--focus-ring);outline-offset:var(--focus-ring-offset)}
+code,kbd,pre,samp{font-family:var(--font-mono);font-size:.925em;font-variant-numeric:tabular-nums}
+hr{border:0;border-top:var(--border-hairline) solid var(--border-subtle);margin:var(--space-8) 0}
+::selection{background:var(--torc-alpha-accent-24);color:var(--text-strong)}
+img,svg,video{max-width:100%}
+button{font:inherit}
+:root{color-scheme:dark}
+[data-theme="light"]{color-scheme:light}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+
+/* Mono eyebrow / kicker — the brand's signature label treatment */
+.torc-kicker{font-family:var(--font-mono);font-size:var(--text-3xs);font-weight:var(--fw-medium);letter-spacing:var(--ls-kicker);text-transform:uppercase;color:var(--text-accent);font-variant-numeric:tabular-nums}
+.torc-kicker--muted{color:var(--text-muted)}
+/* HUD annotation label — the smallest voice in the system */
+.torc-hud-label{font-family:var(--font-mono);font-size:var(--text-4xs);font-weight:var(--fw-medium);letter-spacing:var(--ls-hud);text-transform:uppercase;color:var(--text-muted);font-variant-numeric:tabular-nums}
+
+/* Machined corner brackets — frames a plate or a figure */
+.torc-hud{position:relative}
+.torc-hud::before,.torc-hud::after{content:"";position:absolute;width:var(--hud-bracket);height:var(--hud-bracket);pointer-events:none}
+.torc-hud::before{top:0;left:0;border-top:var(--border-hairline) solid var(--border-hud);border-left:var(--border-hairline) solid var(--border-hud)}
+.torc-hud::after{bottom:0;right:0;border-bottom:var(--border-hairline) solid var(--border-hud);border-right:var(--border-hairline) solid var(--border-hud)}
+
+/* Measurement tick strip — the precision motif. Height = --tick-h-major */
+.torc-ticks{height:var(--tick-h-major);background-image:repeating-linear-gradient(90deg,var(--border-tick) 0 1px,transparent 1px var(--tick-pitch));background-position:bottom left;background-repeat:repeat-x;background-size:100% var(--tick-h)}
+.torc-ticks--major{background-image:repeating-linear-gradient(90deg,var(--border-tick) 0 1px,transparent 1px calc(var(--tick-pitch) * 5)),repeating-linear-gradient(90deg,var(--border-tick) 0 1px,transparent 1px var(--tick-pitch));background-size:100% var(--tick-h-major),100% var(--tick-h)}
+
+/* Full-bleed hairline that a section index sits on */
+.torc-bleed-rule{display:flex;align-items:center;gap:var(--space-4);border-top:var(--border-hairline) solid var(--border-subtle);padding-top:var(--space-3)}
+
+/* Blueprint grid ground — finer and dimmer than before: structure you sense, not see */
+.torc-grid{background-color:var(--bg-page);background-image:linear-gradient(var(--border-grid) var(--border-hairline),transparent var(--border-hairline)),linear-gradient(90deg,var(--border-grid) var(--border-hairline),transparent var(--border-hairline));background-size:var(--grid-unit) var(--grid-unit)}
+/* 45° duotone stripe ground (matches torc-element-duotone.svg) */
+.torc-stripes{background:repeating-linear-gradient(45deg,var(--torc-ink-850) 0 9px,var(--torc-ink-800) 9px 18px)}
+[data-theme="light"] .torc-stripes{background:repeating-linear-gradient(45deg,var(--torc-paper-200) 0 9px,var(--torc-paper-050) 9px 18px)}
+/* Accent hairline rule with a lit end — used under section headers */
+.torc-rule{height:var(--border-hairline);background:linear-gradient(90deg,var(--torc-ink-500),var(--torc-green-400));border:0}
+[data-theme="light"] .torc-rule{background:linear-gradient(90deg,var(--torc-paper-400),var(--torc-green-500))}
+/* Same rule in the warm secondary — a section head that must not read as an action */
+.torc-rule--secondary{background:linear-gradient(90deg,var(--border-strong),var(--secondary))}
+.torc-hairline{border:var(--border-hairline) solid var(--border-subtle)}

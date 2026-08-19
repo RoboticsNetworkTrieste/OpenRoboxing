@@ -1,0 +1,656 @@
+/* OpenRoboxing player view (M4-T1), built to spec/ui-design-guide/.
+ *
+ * No framework, no CDN, no build step: the client must run from a directory a meetup organiser
+ * copied off a USB stick. Every colour, size and weight below is a TORC token from
+ * `spec/ui-design-guide/tokens/`, which is copied verbatim into `client/tokens/` — this sheet
+ * declares layout and state, never a raw ramp value.
+ *
+ * Two gaps in the delivered bundle, handled rather than hidden:
+ *   - the Red Hat woff2 files were not shipped, so `tokens/typography.css` falls back to system-ui.
+ *     Drop the woff2 files into `client/assets/fonts/` and add the bundle's `fonts.css` to fix it.
+ *   - the `.torc-field` background art was not shipped either. `client/assets/backgrounds/` holds
+ *     stand-ins drawn to the sizes the token sheet expects; replacing the files is the whole fix.
+ */
+
+/* The frame is 1080 tall and does not scroll: a fight where the queue is below the fold is a fight
+   you cannot read. The seat row and the teaching bar hold their natural height, and the arena and
+   the map absorb whatever is left — which is also why the canvas is sized by its box rather than by
+   an aspect ratio (ring.resize() re-derives the camera aspect, so it is never stretched). */
+body {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  font-size: var(--text-sm);
+  line-height: var(--lh-normal);
+  overflow: hidden;
+}
+
+.push { margin-left: auto; }
+.hidden { display: none !important; }
+.accent { color: var(--accent); }
+.hairline { height: 1px; background: var(--border-subtle); margin: 14px 0; }
+.caption { margin: 9px 0 0; font-size: var(--text-2xs); line-height: 1.45; color: var(--text-muted); }
+
+.card {
+  background: var(--surface-1);
+  border: var(--border-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}
+
+.plate-label { display: flex; align-items: baseline; gap: var(--space-3); margin-bottom: var(--space-2); }
+
+/* ---- header (60px) ------------------------------------------------------------------------------
+   Telemetry is deliberately one number. Tick counts and the 50/30/60 Hz rates are implementation
+   facts, not decisions — see the design guide's editorial notes. */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-6);
+  height: 60px;
+  flex-shrink: 0;
+  padding: 0 var(--space-5);
+  background: var(--surface-header);
+  border-bottom: var(--border-hairline) solid var(--border-subtle);
+  backdrop-filter: blur(14px);
+}
+
+.brand {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--text-body);
+}
+.v-divider { width: 1px; height: 24px; background: var(--border-subtle); }
+
+.clock-group { display: flex; align-items: baseline; gap: var(--space-3); }
+.clock {
+  font-family: var(--font-display);
+  font-size: 32px;
+  font-weight: var(--fw-bold);
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-strong);
+}
+.round {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+/* Under ten seconds the clock and the pill go warn. That is the only urgency cue. */
+.low .clock, .low .live-label { color: var(--status-warn); }
+.low .live-dot { background: var(--status-warn); box-shadow: 0 0 12px rgba(255, 176, 32, .7); }
+
+.live-pill {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px 10px;
+  background: var(--accent-quiet);
+  border-radius: var(--radius-pill);
+}
+.live-dot {
+  width: 6px; height: 6px;
+  border-radius: var(--radius-circle);
+  background: var(--accent);
+  box-shadow: var(--glow-dot);
+  animation: livedot 2s var(--ease-servo) infinite;
+}
+.live-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-4xs);
+  letter-spacing: var(--ls-hud);
+  text-transform: uppercase;
+  color: var(--text-accent);
+}
+@keyframes livedot { 0%, 100% { opacity: 1 } 50% { opacity: .45 } }
+
+/* ---- the top grid -------------------------------------------------------------------------------
+   1920: arena · 420 map+separation · 360 score. */
+.top-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px 360px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+}
+.rail { display: flex; flex-direction: column; gap: var(--space-4); min-height: 0; }
+
+.arena { padding: var(--space-3); display: flex; flex-direction: column; min-height: 0; }
+/* 16:9 across the column's full width — the shape the design's own plate is drawn at, and the
+   shape the label claims. At 1920 x 1080 it fits with room to spare; on a shorter viewport the wrap
+   crops the top and bottom of the plate rather than stretching the camera or pushing the queue off
+   the screen. Cropping a fixed camera costs empty ceiling; the other two cost the game. */
+.canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.canvas-box { position: relative; width: 100%; aspect-ratio: 16 / 9; flex-shrink: 0; }
+
+canvas#ring {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-page-deep);
+  border-radius: var(--radius-md);
+}
+
+/* The overlay the renderer does not draw: the walk path, the anchor, the contact ring. Its viewBox
+   is set to the canvas's pixel box each resize, so a projected metre lands on the pixel it belongs
+   to and text is never stretched. */
+.arena-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.banner {
+  position: absolute;
+  left: 0; right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: var(--space-4) var(--space-6);
+  background: var(--surface-scrim);
+  border-top: var(--border-line) solid var(--accent);
+  border-bottom: var(--border-hairline) solid var(--border-subtle);
+  backdrop-filter: blur(6px);
+}
+.banner[data-tone="warn"] { border-top-color: var(--status-warn); }
+.banner .kicker {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--text-4xs);
+  letter-spacing: var(--ls-hud);
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.banner[data-tone="warn"] .kicker { color: var(--status-warn); }
+.banner .headline {
+  display: block;
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-heading);
+  color: var(--text-strong);
+  margin-top: 4px;
+}
+.banner .detail {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: var(--border-hairline) solid var(--border-subtle);
+}
+.legend-item { display: flex; align-items: center; gap: 7px; }
+.sw { width: 10px; height: 10px; flex-shrink: 0; }
+.sw-dot-red { border-radius: var(--radius-circle); background: var(--status-danger); }
+.sw-anchor { border: var(--border-line) solid var(--status-danger); transform: rotate(45deg); }
+.sw-ghost { border-radius: var(--radius-circle); border: var(--border-line) dashed var(--accent); }
+
+/* ---- placement map ------------------------------------------------------------------------------
+   The map takes what the rail has left and stays square inside it — the ring is square, and a map
+   that stretched would lie about where the ghost is standing. */
+.map-card { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.map {
+  display: block;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  background: var(--bg-page-deep);
+  border-radius: var(--radius-md);
+}
+
+/* ---- separation --------------------------------------------------------------------------------- */
+.sep-head { display: flex; align-items: baseline; gap: var(--space-3); margin-top: 6px; }
+.sep-band {
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: var(--fw-bold);
+  letter-spacing: var(--ls-heading);
+  color: var(--text-muted);
+}
+.sep-metres {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+/* Bands are the scorer's own contact range (0.80 m), not a second idea of "close". */
+.sep-head[data-band="close"] .sep-band { color: var(--status-ok); }
+.sep-head[data-band="near"] .sep-band { color: var(--status-warn); }
+.sep-head[data-band="out"] .sep-band { color: var(--text-secondary); }
+.sep-head[data-band="miles"] .sep-band { color: var(--text-muted); }
+
+.sep-strip { display: flex; height: 6px; margin-top: 10px; gap: 1px; }
+.sep-strip span { background: var(--surface-3); }
+.sep-strip span[data-band="close"] { width: 40%; }
+.sep-strip span[data-band="near"] { width: 25%; }
+.sep-strip span[data-band="out"] { width: 20%; }
+.sep-strip span[data-band="miles"] { width: 15%; }
+/* The active segment carries its own band's colour rather than a fixed amber. The design guide
+   states the rule from a CLOSING frame, where the two are the same value; using the band colour
+   keeps the strip agreeing with the word above it in the other three cases too. */
+.sep-strip span.on { opacity: .9; }
+.sep-strip span[data-band="close"].on { background: var(--status-ok); }
+.sep-strip span[data-band="near"].on { background: var(--status-warn); }
+.sep-strip span[data-band="out"].on { background: var(--text-secondary); }
+.sep-strip span[data-band="miles"].on { background: var(--text-muted); }
+
+.sep-legend { display: grid; grid-template-columns: 40% 25% 20% 15%; gap: 1px; margin-top: 5px; }
+.sep-legend .torc-hud-label { font-size: 9px; }
+.sep-legend [data-band="close"].on { color: var(--status-ok); }
+.sep-legend [data-band="near"].on { color: var(--status-warn); }
+.sep-legend [data-band="out"].on { color: var(--text-secondary); }
+.sep-legend [data-band="miles"].on { color: var(--text-body); }
+
+/* ---- the live score ------------------------------------------------------------------------------
+   spec/scoring.md's own weighted number run over the round so far. Not a second scoreboard, so it
+   can never disagree with the official result at the bell — and never presented as final. */
+.chip {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: var(--ls-kicker);
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: var(--radius-md);
+}
+.chip-warn { background: var(--status-warn-quiet); color: var(--status-warn-quiet-fg); }
+
+.share-row { display: flex; align-items: baseline; justify-content: space-between; margin-top: 14px; }
+.share {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+}
+.share.red { color: var(--status-danger); }
+.share.blue { color: var(--status-info); }
+
+.bar { display: flex; }
+.share-bar { height: 10px; margin-top: var(--space-2); gap: 2px; }
+.share-bar .fill-red { width: 50%; background: var(--status-danger); }
+.share-bar .fill-blue { width: 50%; background: var(--status-info); }
+
+.dims { display: flex; flex-direction: column; gap: 9px; }
+.dim-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-4xs);
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.dim-bar { height: 4px; margin-top: 5px; gap: 2px; }
+.dim-bar span { opacity: .8; width: 50%; }
+.dim-bar .fill-red { background: var(--status-danger); }
+.dim-bar .fill-blue { background: var(--status-info); }
+
+.totals { display: flex; align-items: baseline; gap: var(--space-3); }
+
+/* ---- the seats ----------------------------------------------------------------------------------- */
+/* The seat row takes the height its content needs and no more — the arena above it gets the rest.
+   The other way round leaves a panel of empty card under the queue and a squeezed ring, and the
+   ring is the thing being played. */
+.seats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  padding: 0 var(--space-4);
+  flex: 0 0 auto;
+}
+
+.seat {
+  background: var(--surface-1);
+  border: var(--border-hairline) solid var(--border-subtle);
+  border-top: var(--border-line) solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  padding: 14px var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+#seat-red { border-top-color: var(--status-danger); }
+#seat-blue { border-top-color: var(--status-info); }
+
+.seat-head { display: flex; align-items: center; gap: var(--space-3); }
+.seat-square { width: 9px; height: 9px; }
+#seat-red .seat-square { background: var(--status-danger); }
+#seat-blue .seat-square { background: var(--status-info); }
+.seat-corner {
+  font-family: var(--font-mono);
+  font-size: var(--text-4xs);
+  letter-spacing: var(--ls-hud);
+  text-transform: uppercase;
+}
+#seat-red .seat-corner { color: var(--status-danger); }
+#seat-blue .seat-corner { color: var(--status-info); }
+
+.handle {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--text-strong);
+}
+.landed { display: flex; align-items: baseline; gap: 6px; margin-left: 14px; }
+.landed b {
+  font-family: var(--font-display);
+  font-size: var(--text-lg);
+  font-weight: var(--fw-bold);
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.keys { display: flex; align-items: center; gap: var(--space-2); }
+.key-chip {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--text-secondary);
+  background: var(--surface-3);
+  border: var(--border-hairline) solid var(--border-strong);
+  padding: 5px 8px;
+  border-radius: var(--radius-md);
+  letter-spacing: .1em;
+}
+.key-commit {
+  font-weight: var(--fw-semibold);
+  color: var(--text-on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+  padding: 5px 10px;
+}
+.key-note { font-size: var(--text-3xs); color: var(--text-secondary); }
+.key-note.dim { color: var(--text-muted); }
+
+/* `can_commit` is the host's decision. The chip greys out because the host said so, never because
+   this file worked the rule out for itself. */
+.seat.locked .key-commit {
+  color: var(--text-muted);
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+  opacity: .42;
+  cursor: not-allowed;
+}
+.seat.locked .loadout { opacity: .42; }
+
+.seat-grid {
+  display: grid;
+  grid-template-columns: 344px 268px minmax(0, 1fr);
+  gap: var(--space-4);
+  flex: 1;
+  min-height: 0;
+}
+/* Two labels, and the left one is a sentence the game depends on ("no cancellation"). It is allowed
+   to wrap rather than be truncated; the reserved height keeps the queue from jumping when it does. */
+.col-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 var(--space-2);
+  min-height: 26px;
+  margin-bottom: 5px;
+}
+.loadout-col, .queue-col { display: flex; flex-direction: column; min-width: 0; }
+
+.loadout { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.slot {
+  position: relative;
+  border: var(--border-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 7px 8px;
+  background: var(--surface-glass);
+  min-width: 0;
+}
+.slot .key {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: var(--fw-semibold);
+  color: var(--text-body);
+}
+.slot .name {
+  display: block;
+  font-size: var(--text-3xs);
+  line-height: 1.2;
+  color: var(--text-secondary);
+  margin-top: 3px;
+  min-height: 20px;
+  overflow-wrap: anywhere;
+}
+.slot .dur {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--text-4xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* A seat this page does not hold has no loadout: the host never sends one for somebody else's
+   fighter. Hatched, so it reads as withheld rather than as six empty slots. */
+.slot.private {
+  background: repeating-linear-gradient(45deg, var(--surface-glass) 0 5px, transparent 5px 10px);
+}
+.slot.private .name { color: var(--text-muted); }
+.slot.private .key { color: var(--text-muted); }
+
+.slot.staged {
+  border: var(--border-line) solid var(--accent);
+  background: var(--accent-quiet);
+}
+.slot.staged .key, .slot.staged .dur { color: var(--text-accent); }
+.slot.staged .name { color: var(--text-strong); }
+.slot.staged::after {
+  content: "staged";
+  position: absolute;
+  top: -7px; right: -1px;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: var(--ls-kicker);
+  text-transform: uppercase;
+  background: var(--accent);
+  color: var(--text-on-accent);
+  padding: 2px 5px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---- cost of this commit -------------------------------------------------------------------------
+   Under a queue you cannot take back, how long you are tying the fighter up for is the decision.
+   Computed here at 60 fps from the anchor, never round-tripped. */
+.cost {
+  border: var(--border-hairline) solid var(--border-accent);
+  border-top: var(--border-line) solid var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--accent-quiet);
+  padding: var(--space-3) 14px;
+  display: flex;
+  flex-direction: column;
+}
+.cost.idle {
+  border: var(--border-hairline) solid var(--border-subtle);
+  background: var(--surface-glass);
+}
+.cost-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-4xs);
+  letter-spacing: var(--ls-hud);
+  text-transform: uppercase;
+  color: var(--text-accent);
+}
+.cost.idle .cost-label { color: var(--text-muted); }
+.cost-figure { display: flex; align-items: baseline; gap: 10px; margin-top: 6px; }
+.cost-value {
+  font-family: var(--font-display);
+  font-size: 38px;
+  font-weight: var(--fw-bold);
+  letter-spacing: -.025em;
+  color: var(--text-strong);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.cost.idle .cost-value { color: var(--text-muted); }
+.cost-sub { font-size: var(--text-2xs); color: var(--text-body); }
+.cost.idle .cost-sub { color: var(--text-muted); }
+
+.cost-bar { height: 7px; margin-top: 10px; gap: 2px; }
+.cost-bar .fill-walk { background: var(--accent); opacity: .45; }
+.cost-bar .fill-throw { background: var(--accent); }
+.cost-split {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* An error is the server's own sentence, verbatim. It never steals focus and never blocks the
+   fight. */
+.alert {
+  margin-top: auto;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-3xs);
+  line-height: 1.4;
+}
+.alert-danger {
+  background: var(--status-danger-quiet);
+  border-left: var(--border-heavy) solid var(--status-danger);
+  color: var(--status-danger-quiet-fg);
+}
+
+/* ---- the queue ------------------------------------------------------------------------------------
+   Five rows, always drawn, so the room you have left is visible rather than inferred from a number. */
+.queue { display: flex; flex-direction: column; gap: 4px; }
+.qrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  border: var(--border-hairline) dashed var(--border-default);
+}
+.qrow .state {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: var(--ls-kicker);
+  text-transform: uppercase;
+  color: var(--text-muted);
+  width: 66px;
+  flex-shrink: 0;
+}
+.qrow .pose {
+  font-size: var(--text-3xs);
+  color: var(--text-body);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qrow .timing {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.qrow.waiting { border: var(--border-hairline) solid var(--border-strong); background: var(--surface-3); }
+.qrow.waiting .state { color: var(--text-secondary); }
+
+/* Walking is the state most worth drawing: the move has started and the punch has not been thrown. */
+.qrow.walking { border: var(--border-line) solid var(--accent); background: var(--accent-quiet); }
+.qrow.walking .state { color: var(--text-accent); }
+.qrow.walking .pose { color: var(--text-strong); }
+
+.qrow.striking { border: var(--border-line) solid var(--border-strong); }
+.qrow.striking .pose { color: var(--text-strong); }
+#seat-red .qrow.striking { border-color: var(--status-danger); background: var(--status-danger-quiet); }
+#seat-red .qrow.striking .state { color: var(--status-danger); }
+#seat-blue .qrow.striking { border-color: var(--status-info); background: var(--status-info-quiet); }
+#seat-blue .qrow.striking .state { color: var(--status-info); }
+
+/* A queued-but-unstarted commit of somebody else's is withheld by design — drawn as withheld, not
+   as unknown, so nobody reads an empty cell as an empty queue. */
+.qrow.private {
+  border: var(--border-hairline) solid var(--border-subtle);
+  background: repeating-linear-gradient(45deg, var(--surface-glass) 0 5px, transparent 5px 10px);
+}
+
+.queue-left-full { color: var(--status-danger-quiet-fg); }
+.queue-left-some { color: var(--text-accent); }
+
+/* ---- the teaching bar ------------------------------------------------------------------------------ */
+.teach {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 10px var(--space-5);
+  margin-top: var(--space-3);
+  flex-shrink: 0;
+  border-top: var(--border-hairline) solid var(--border-subtle);
+  background: var(--surface-glass);
+}
+.teach p { margin: 0; font-size: var(--text-xs); line-height: 1.4; color: var(--text-body); }
+
+/* ---- seat states ------------------------------------------------------------------------------------
+   A seat that is not ours (an agent, or a second machine) shows what the host will show it: the
+   executing commit and nothing else. A seat that has dropped holds its last value, dimmed. */
+.seat.remote .keys, .seat.remote .cost { opacity: .42; }
+.seat.remote .loadout { opacity: .42; }
+.seat.dropped { opacity: .55; }
+.seat.down { border-color: var(--status-warn); }
+
+.status-dot { display: inline-block; width: 7px; height: 7px; border-radius: var(--radius-circle); margin-right: 7px; }
+.status-dot.ok { background: var(--accent); box-shadow: var(--glow-dot); }
+.status-dot.bad { background: var(--status-danger); }
+
+/* ---- responsive --------------------------------------------------------------------------------------
+   1920 x 1080 is the design target. Below it the rails stack and the canvas scales; the seats go to
+   one column below 720 px, where two people are not sharing the keyboard anyway. */
+@media (max-width: 1500px) {
+  .top-grid { grid-template-columns: minmax(0, 1fr) 360px; }
+  .top-grid .rail:last-child { grid-column: 2; }
+  .seat-grid { grid-template-columns: minmax(0, 1fr) 240px minmax(0, 1fr); }
+}
+/* Below the design's own width the frame stops being a frame: the rails stack under the arena and
+   the page is allowed to scroll, because clipping a queue is worse than a scrollbar. */
+@media (max-width: 1100px) {
+  body { height: auto; min-height: 100vh; overflow-y: auto; }
+  .top-grid { grid-template-columns: minmax(0, 1fr); flex: none; }
+  .top-grid .rail { flex-direction: row; }
+  .top-grid .rail > .card { flex: 1; }
+  .canvas-wrap { flex: none; }
+  .canvas-box { height: auto; width: 100%; }
+  .map { height: auto; }
+}
+@media (max-width: 720px) {
+  .seats { grid-template-columns: 1fr; }
+  .seat-grid { grid-template-columns: 1fr; }
+  .top-grid .rail { flex-direction: column; }
+}

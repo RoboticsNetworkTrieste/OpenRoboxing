@@ -1,0 +1,14 @@
+[submodule "external/gr00t-wbc"]
+	path = external/gr00t-wbc
+	url = https://github.com/NVlabs/GR00T-WholeBodyControl.git
+	branch = main
+	# Running a match imports upstream's Python and scatters __pycache__ through the submodule,
+	# which would otherwise leave the superproject reporting ` M external/gr00t-wbc` forever — the
+	# one thing this layout promises never happens. Upstream's own .gitignore covers all but one
+	# directory, force-re-included by a negation in motionbricks/.gitignore, and a tracked
+	# .gitignore outranks .git/info/exclude, so it cannot be silenced from inside.
+	#
+	# `untracked`, not `dirty` or `all`: an edit to tracked content or a moved HEAD must still be
+	# reported. install.sh sets the same thing in .git/config; having it here too means a fresh
+	# clone is quiet before anyone runs the installer.
+	ignore = untracked

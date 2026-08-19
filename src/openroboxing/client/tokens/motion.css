@@ -1,0 +1,17 @@
+/* ── Motion ─────────────────────────────────────────────────────
+   Mechanical, not playful: short, linear-ish easings, no bounce,
+   no spring overshoot. Things settle like a servo, not a spring. */
+:root{
+  --dur-instant:80ms; /* @kind other */
+  --dur-fast:140ms; /* @kind other */   /* hover, press */
+  --dur-base:220ms; /* @kind other */   /* enter/exit, expand */
+  --dur-slow:380ms; /* @kind other */   /* page/section reveal */
+  --dur-rotate:1100ms; /* @kind other *//* torque arc spin */
+
+  --ease-standard:cubic-bezier(.2,0,.2,1); /* @kind other */
+  --ease-out:cubic-bezier(0,0,.2,1); /* @kind other */
+  --ease-in:cubic-bezier(.4,0,1,1); /* @kind other */
+  --ease-servo:cubic-bezier(.33,0,.15,1); /* @kind other */ /* signature: fast start, firm stop */
+
+  --transition-control:background-color var(--dur-fast) var(--ease-standard),border-color var(--dur-fast) var(--ease-standard),color var(--dur-fast) var(--ease-standard),box-shadow var(--dur-fast) var(--ease-standard); /* @kind other */
+}

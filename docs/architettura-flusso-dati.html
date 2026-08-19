@@ -1,0 +1,1250 @@
+<title>OpenRoboxing — Come un commit diventa movimento</title>
+
+<style>
+/* ─────────────────────────────────────────────────────────────
+   Palette TORC. Due terreni, non un tema e il suo negativo:
+   "paper" è il terreno di lettura (documenti), "ink" quello
+   dell'operatore (dashboard, ring). Un documento nasce su paper.
+   Valori presi da src/openroboxing/spec/ui-design-guide/tokens/.
+   ───────────────────────────────────────────────────────────── */
+:root{
+  --bg:#EFEDE6;
+  --bg-deep:#E5E2D9;
+  --surface:#F8F7F3;
+  --surface-2:#E9E6DC;
+  --line:#D5D1C4;
+  --line-strong:#B6B1A0;
+  --text:#1C2B24;
+  --text-strong:#0F231B;
+  --text-soft:#4A5D53;
+  --text-muted:#6E7F74;
+  --accent:#12654A;
+  --accent-mark:#2FB98A;
+  --accent-quiet:rgba(47,185,138,.12);
+  --clay:#8C5430;
+  --clay-mark:#BC7B4C;
+  --clay-quiet:rgba(188,123,76,.13);
+  --code-bg:#E8E5DB;
+  --shadow:0 1px 2px rgba(15,35,27,.07), 0 8px 24px -18px rgba(15,35,27,.35);
+
+  --font-sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --font-mono:ui-monospace,"SF Mono","Cascadia Mono","Roboto Mono",Menlo,Consolas,monospace;
+
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#08130F;
+    --bg-deep:#050D0A;
+    --surface:#101E18;
+    --surface-2:#16281F;
+    --line:#1E3529;
+    --line-strong:#2C4A3C;
+    --text:#EAF2ED;
+    --text-strong:#FFFFFF;
+    --text-soft:#B7C9BE;
+    --text-muted:#6E8C7E;
+    --accent:#4FD1A0;
+    --accent-mark:#4FD1A0;
+    --accent-quiet:rgba(79,209,160,.12);
+    --clay:#DDAE86;
+    --clay-mark:#DDAE86;
+    --clay-quiet:rgba(221,174,134,.12);
+    --code-bg:#0C1A14;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -20px rgba(0,0,0,.8);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#08130F;
+  --bg-deep:#050D0A;
+  --surface:#101E18;
+  --surface-2:#16281F;
+  --line:#1E3529;
+  --line-strong:#2C4A3C;
+  --text:#EAF2ED;
+  --text-strong:#FFFFFF;
+  --text-soft:#B7C9BE;
+  --text-muted:#6E8C7E;
+  --accent:#4FD1A0;
+  --accent-mark:#4FD1A0;
+  --accent-quiet:rgba(79,209,160,.12);
+  --clay:#DDAE86;
+  --clay-mark:#DDAE86;
+  --clay-quiet:rgba(221,174,134,.12);
+  --code-bg:#0C1A14;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 30px -20px rgba(0,0,0,.8);
+  color-scheme:dark;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font-sans);
+  font-size:17px;
+  line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.page{max-width:1120px;margin:0 auto;padding:0 24px 96px}
+
+/* ── voce mono: kicker, etichette, dati ── */
+.kicker{
+  font-family:var(--font-mono);font-size:11px;font-weight:600;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--accent);
+  font-variant-numeric:tabular-nums;
+}
+.kicker--muted{color:var(--text-muted)}
+.hud{
+  font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--text-muted);
+}
+
+/* ── testata ── */
+.masthead{padding:56px 0 40px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:12px;margin-bottom:40px}
+.brand svg{width:30px;height:30px;display:block}
+.brand-name{font-family:var(--font-mono);font-size:13px;font-weight:600;letter-spacing:.22em;text-transform:uppercase;color:var(--text-strong)}
+.brand-sep{width:1px;height:18px;background:var(--line-strong)}
+.brand-sub{font-family:var(--font-mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--text-muted)}
+h1{
+  font-size:clamp(34px,5.6vw,60px);line-height:1.03;letter-spacing:-.035em;
+  font-weight:650;color:var(--text-strong);margin:14px 0 0;text-wrap:balance;max-width:16ch;
+}
+.standfirst{margin:22px 0 0;max-width:60ch;font-size:19px;line-height:1.55;color:var(--text-soft)}
+.meta{display:flex;flex-wrap:wrap;gap:8px 28px;margin-top:32px}
+.meta span{font-family:var(--font-mono);font-size:12px;letter-spacing:.06em;color:var(--text-muted)}
+.meta b{color:var(--text-soft);font-weight:500}
+
+/* ── sezioni: numerate perché sono una sequenza reale, il viaggio del dato ── */
+section{padding:56px 0 0}
+.sec-head{
+  display:grid;grid-template-columns:64px minmax(0,1fr);gap:20px;align-items:start;
+  border-top:1px solid var(--line);padding-top:20px;margin-bottom:26px;
+}
+.sec-num{font-family:var(--font-mono);font-size:13px;font-weight:600;letter-spacing:.08em;color:var(--accent);padding-top:9px}
+h2{font-size:clamp(25px,3.2vw,34px);line-height:1.15;letter-spacing:-.025em;font-weight:650;color:var(--text-strong);margin:0;text-wrap:balance;max-width:22ch}
+.sec-head p{margin:10px 0 0;color:var(--text-soft);max-width:62ch}
+.body{display:grid;grid-template-columns:64px minmax(0,1fr);gap:20px}
+.body > .col{min-width:0}
+.body p,.body ul,.body ol,.body dl{max-width:68ch}
+.body p{margin:0 0 18px}
+h3{font-size:19px;line-height:1.3;letter-spacing:-.01em;font-weight:650;color:var(--text-strong);margin:32px 0 12px}
+ul,ol{margin:0 0 18px;padding-left:22px}
+li{margin:0 0 9px}
+li::marker{color:var(--text-muted)}
+strong{color:var(--text-strong);font-weight:600}
+code{font-family:var(--font-mono);font-size:.9em;background:var(--code-bg);padding:1px 5px;border-radius:3px;color:var(--text-strong)}
+a{color:var(--accent);text-underline-offset:3px}
+
+/* ── il riquadro "in cinque righe" ── */
+.tldr{
+  background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent-mark);
+  padding:26px 28px;margin:44px 0 0;box-shadow:var(--shadow);
+}
+.tldr p{margin:12px 0 0;max-width:66ch}
+.tldr p:first-of-type{margin-top:14px}
+
+/* ── note e avvisi ── */
+.note{
+  background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--clay-mark);
+  padding:18px 22px;margin:0 0 22px;max-width:68ch;
+}
+.note p{margin:8px 0 0}
+.note p:first-of-type{margin-top:8px}
+.note .hud{color:var(--clay)}
+
+/* ── dove sta nel codice ── */
+.where{
+  display:flex;flex-wrap:wrap;gap:6px 14px;align-items:baseline;
+  margin:0 0 26px;padding:10px 0 0;border-top:1px dashed var(--line);max-width:68ch;
+}
+.where .hud{flex:0 0 auto}
+.where code{background:none;padding:0;color:var(--text-soft);font-size:12.5px}
+
+/* ── figure ── */
+figure{margin:34px 0 34px;background:var(--surface);border:1px solid var(--line);padding:26px 22px 18px;position:relative;box-shadow:var(--shadow)}
+figure::before,figure::after{content:"";position:absolute;width:12px;height:12px;pointer-events:none}
+figure::before{top:6px;left:6px;border-top:1px solid var(--line-strong);border-left:1px solid var(--line-strong)}
+figure::after{bottom:6px;right:6px;border-bottom:1px solid var(--line-strong);border-right:1px solid var(--line-strong)}
+.figscroll{overflow-x:auto}
+figure svg{display:block;width:100%;height:auto;min-width:520px;color:var(--text-soft)}
+figcaption{margin-top:16px;padding-top:12px;border-top:1px solid var(--line);font-size:14px;line-height:1.5;color:var(--text-muted);max-width:76ch}
+figcaption b{color:var(--text-soft);font-weight:600}
+
+/* elementi dei diagrammi */
+.d-fill{fill:var(--surface-2)}
+.d-fill-accent{fill:var(--accent-quiet)}
+.d-fill-clay{fill:var(--clay-quiet)}
+.d-stroke{stroke:var(--line-strong);fill:none}
+.d-stroke-accent{stroke:var(--accent-mark);fill:none}
+.d-stroke-clay{stroke:var(--clay-mark);fill:none}
+.d-line{stroke:var(--text-muted);fill:none;stroke-width:1.4}
+.d-line-accent{stroke:var(--accent-mark);fill:none;stroke-width:1.8}
+.d-line-clay{stroke:var(--clay-mark);fill:none;stroke-width:1.6}
+.d-dash{stroke-dasharray:5 4}
+.d-t{font-family:var(--font-sans);font-size:13px;fill:var(--text-strong);font-weight:600}
+.d-ts{font-family:var(--font-sans);font-size:11.5px;fill:var(--text-soft)}
+.d-m{font-family:var(--font-mono);font-size:10.5px;fill:var(--text-muted);letter-spacing:.04em}
+.d-ma{font-family:var(--font-mono);font-size:10.5px;fill:var(--accent);letter-spacing:.04em}
+.d-mc{font-family:var(--font-mono);font-size:10.5px;fill:var(--clay);letter-spacing:.04em}
+.mk-ink polygon{fill:var(--text-muted)}
+.mk-accent polygon{fill:var(--accent-mark)}
+.mk-clay polygon{fill:var(--clay-mark)}
+
+/* ── tabelle ── */
+.tablewrap{overflow-x:auto;margin:0 0 26px}
+table{border-collapse:collapse;width:100%;min-width:520px;font-size:15px}
+caption{text-align:left;font-family:var(--font-mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--text-muted);padding-bottom:10px}
+th,td{text-align:left;padding:9px 14px 9px 0;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text-muted);border-bottom-color:var(--line-strong)}
+td.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:var(--text-strong);white-space:nowrap}
+td code{background:none;padding:0}
+
+/* ── codice ── */
+pre{
+  background:var(--code-bg);border:1px solid var(--line);padding:18px 20px;margin:0 0 26px;
+  overflow-x:auto;font-family:var(--font-mono);font-size:13px;line-height:1.65;color:var(--text-soft);
+}
+pre b{color:var(--text-strong);font-weight:600}
+pre i{color:var(--text-muted);font-style:normal}
+pre em{color:var(--accent);font-style:normal}
+
+/* ── scheda "anatomia del commit" ── */
+.record{border:1px solid var(--line-strong);background:var(--surface);margin:0 0 28px;box-shadow:var(--shadow)}
+.record-head{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:baseline;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line-strong);background:var(--surface-2)}
+.record-zone{padding:6px 20px 16px}
+.record-zone > .hud{display:block;padding:14px 0 6px}
+.zone-runtime{border-top:1px dashed var(--line-strong);background:var(--accent-quiet)}
+.field{display:grid;grid-template-columns:minmax(150px,1fr) minmax(0,2.1fr);gap:4px 20px;padding:9px 0;border-bottom:1px solid var(--line)}
+.field:last-child{border-bottom:0}
+.field dt{font-family:var(--font-mono);font-size:12.5px;color:var(--text-strong);font-weight:600}
+.field dd{margin:0;font-size:14.5px;color:var(--text-soft)}
+
+/* ── coppie di confronto ── */
+.pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;margin:0 0 26px}
+.pair > div{border:1px solid var(--line);background:var(--surface);padding:18px 20px}
+.pair h4{margin:8px 0 8px;font-size:16px;color:var(--text-strong);font-weight:650;letter-spacing:-.01em}
+.pair p{margin:0;font-size:14.5px;color:var(--text-soft);max-width:none}
+.pair .good{color:var(--accent)}
+.pair .bad{color:var(--clay)}
+
+/* ── glossario ── */
+.gloss{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:2px 32px;margin:0 0 26px}
+.gloss div{padding:12px 0;border-bottom:1px solid var(--line)}
+.gloss dt{font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text-strong);margin-bottom:3px}
+.gloss dd{margin:0;font-size:14.5px;color:var(--text-soft)}
+
+/* ── chiusura ── */
+.closing{margin-top:64px;border-top:1px solid var(--line-strong);padding-top:26px;display:grid;grid-template-columns:64px minmax(0,1fr);gap:20px}
+.closing p{max-width:66ch;color:var(--text-soft)}
+
+@media (max-width:820px){
+  body{font-size:16px}
+  .sec-head,.body,.closing{grid-template-columns:1fr;gap:0}
+  .sec-num{padding:0 0 6px}
+  .field{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+</style>
+
+<div class="page">
+
+<header class="masthead">
+  <div class="brand">
+    <svg viewBox="0 0 100 100" role="img" aria-label="TORC">
+      <path d="M50 79.602Q43.604 79.602 38.110 77.347Q32.616 75.092 28.434 71.033Q24.252 66.974 21.956 61.603Q19.660 56.232 19.660 50Q19.660 43.768 21.956 38.397Q24.252 33.026 28.434 28.967Q32.616 24.908 38.110 22.653Q43.604 20.398 50 20.398Q56.396 20.398 61.931 22.653Q67.466 24.908 71.607 28.967Q75.748 33.026 78.044 38.397Q80.340 43.768 80.340 50Q80.340 56.232 78.044 61.603Q75.748 66.974 71.607 71.033Q67.466 75.092 61.931 77.347Q56.396 79.602 50 79.602ZM50 68.696Q53.936 68.696 57.216 67.261Q60.496 65.826 62.956 63.325Q65.416 60.824 66.769 57.380Q68.122 53.936 68.122 50Q68.122 45.982 66.769 42.579Q65.416 39.176 62.956 36.675Q60.496 34.174 57.216 32.739Q53.936 31.304 50.082 31.304Q46.146 31.304 42.866 32.739Q39.586 34.174 37.126 36.675Q34.666 39.176 33.272 42.579Q31.878 45.982 31.878 50Q31.878 53.936 33.272 57.380Q34.666 60.824 37.126 63.325Q39.586 65.826 42.866 67.261Q46.146 68.696 50 68.696Z" fill="currentColor"></path>
+      <path d="M 50 18.8 A 31.2 31.2 0 0 1 80.7 44.6" fill="none" stroke="var(--accent-mark)" stroke-width="6.5" stroke-linecap="round"></path>
+      <circle cx="80.7" cy="44.6" r="4.5" fill="var(--accent-mark)"></circle>
+    </svg>
+    <span class="brand-name">TORC</span>
+    <span class="brand-sep" aria-hidden="true"></span>
+    <span class="brand-sub">OpenRoboxing · nota di architettura</span>
+  </div>
+
+  <p class="kicker">Il cuore del sistema · dal commit al movimento</p>
+  <h1>Come un pugno diventa fisica</h1>
+  <p class="standfirst">
+    Due robot umanoidi si affrontano dentro un simulatore. Un giocatore non preme "pugno": sceglie la
+    <em>posa</em> in cui il colpo deve finire, decide <em>dove</em> deve finire, e conferma. Da lì in poi
+    lavorano due reti neurali NVIDIA in cascata e un motore fisico. Questo documento segue quel dato,
+    passo per passo, dal tasto premuto alla coppia applicata al motore.
+  </p>
+  <div class="meta">
+    <span>Per la <b>community TORC</b></span>
+    <span>Livello: <b>tecnico, zero prerequisiti di robotica</b></span>
+    <span>Codice: <b>src/openroboxing/</b></span>
+  </div>
+</header>
+
+<div class="tldr">
+  <p class="kicker">Il sistema in cinque righe</p>
+  <p>
+    Il <strong>server</strong> è l'unico che sa la verità: il browser è solo occhi e tastiera.
+    <strong>MotionBricks</strong> (rete generativa) inventa il movimento: gli dici "sii lì, in quella posa"
+    e ti restituisce una traiettoria kinematica a 30 Hz. Il <strong>bridge</strong> la porta a 50 Hz.
+    <strong>GEAR-SONIC</strong> (politica di controllo whole-body, due reti ONNX) guarda quella traiettoria e
+    lo stato reale del corpo e produce 29 comandi ai giunti, cinquanta volte al secondo.
+    <strong>MuJoCo</strong> applica le coppie a 1 kHz e decide che cosa succede davvero — se il colpo arriva,
+    se il robot cade. Il risultato torna indietro e diventa l'ingresso del ciclo successivo.
+  </p>
+</div>
+
+<figure>
+  <div class="figscroll">
+  <svg viewBox="0 0 900 300" role="img" aria-label="Le quattro macchine in catena: browser, host, MotionBricks, GEAR-SONIC, MuJoCo, con il ritorno dello stato fisico verso il generatore e verso la politica.">
+    <defs>
+      <marker id="a1" class="mk-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+      <marker id="a1c" class="mk-clay" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+    </defs>
+
+    <!-- boxes -->
+    <rect x="8"   y="70" width="158" height="80" rx="3" class="d-fill"></rect>
+    <rect x="8"   y="70" width="158" height="80" rx="3" class="d-stroke"></rect>
+    <text x="87" y="100" class="d-t" text-anchor="middle">Browser</text>
+    <text x="87" y="120" class="d-ts" text-anchor="middle">occhi e tastiera</text>
+    <text x="87" y="137" class="d-m" text-anchor="middle">client/</text>
+
+    <rect x="193" y="70" width="158" height="80" rx="3" class="d-fill"></rect>
+    <rect x="193" y="70" width="158" height="80" rx="3" class="d-stroke"></rect>
+    <text x="272" y="100" class="d-t" text-anchor="middle">Host</text>
+    <text x="272" y="120" class="d-ts" text-anchor="middle">regole, coda, orologio</text>
+    <text x="272" y="137" class="d-m" text-anchor="middle">server/ · runtime/intents</text>
+
+    <rect x="378" y="70" width="158" height="80" rx="3" class="d-fill-accent"></rect>
+    <rect x="378" y="70" width="158" height="80" rx="3" class="d-stroke-accent"></rect>
+    <text x="457" y="100" class="d-t" text-anchor="middle">MotionBricks</text>
+    <text x="457" y="120" class="d-ts" text-anchor="middle">che cosa fare</text>
+    <text x="457" y="137" class="d-ma" text-anchor="middle">rete generativa · GPU</text>
+
+    <rect x="563" y="70" width="158" height="80" rx="3" class="d-fill-accent"></rect>
+    <rect x="563" y="70" width="158" height="80" rx="3" class="d-stroke-accent"></rect>
+    <text x="642" y="100" class="d-t" text-anchor="middle">GEAR-SONIC</text>
+    <text x="642" y="120" class="d-ts" text-anchor="middle">come muovere i giunti</text>
+    <text x="642" y="137" class="d-ma" text-anchor="middle">encoder + decoder ONNX</text>
+
+    <rect x="748" y="70" width="144" height="80" rx="3" class="d-fill"></rect>
+    <rect x="748" y="70" width="144" height="80" rx="3" class="d-stroke"></rect>
+    <text x="820" y="100" class="d-t" text-anchor="middle">MuJoCo</text>
+    <text x="820" y="120" class="d-ts" text-anchor="middle">che cosa succede</text>
+    <text x="820" y="137" class="d-m" text-anchor="middle">fisica · 1 kHz</text>
+
+    <!-- arrows -->
+    <line x1="168" y1="110" x2="189" y2="110" class="d-line" marker-end="url(#a1)"></line>
+    <text x="178" y="60"  class="d-m" text-anchor="middle">commit</text>
+
+    <line x1="353" y1="110" x2="374" y2="110" class="d-line" marker-end="url(#a1)"></line>
+    <text x="363" y="60"  class="d-m" text-anchor="middle">intento</text>
+
+    <line x1="538" y1="110" x2="559" y2="110" class="d-line-accent" marker-end="url(#a1)"></line>
+    <text x="548" y="52"  class="d-ma" text-anchor="middle">posa</text>
+    <text x="548" y="64"  class="d-ma" text-anchor="middle">30 Hz</text>
+
+    <line x1="723" y1="110" x2="744" y2="110" class="d-line-accent" marker-end="url(#a1)"></line>
+    <text x="733" y="52"  class="d-ma" text-anchor="middle">azioni</text>
+    <text x="733" y="64"  class="d-ma" text-anchor="middle">50 Hz</text>
+
+    <!-- feedback -->
+    <path d="M820 154 L820 205 L457 205 L457 158" class="d-line-clay d-dash" marker-end="url(#a1c)"></path>
+    <text x="640" y="199" class="d-mc" text-anchor="middle">dove sono davvero → ripianifica</text>
+
+    <path d="M820 154 L820 245 L642 245 L642 158" class="d-line-clay d-dash" marker-end="url(#a1c)"></path>
+    <text x="742" y="262" class="d-mc" text-anchor="middle">stato del corpo → osservazione</text>
+
+    <path d="M820 154 L820 282 L272 282 L272 158" class="d-line d-dash" marker-end="url(#a1)"></path>
+    <text x="470" y="277" class="d-m" text-anchor="middle">stato del match → schermo</text>
+  </svg>
+  </div>
+  <figcaption>
+    <b>Le quattro macchine.</b> Ognuna risponde a una domanda diversa e nessuna sa rispondere a quella
+    dell'altra. Le tre frecce tratteggiate sono la parte che si dimentica sempre: niente qui è "a ciclo aperto",
+    la fisica rientra continuamente sia nel generatore (per correggere il piano) sia nella politica (come stato
+    misurato).
+  </figcaption>
+</figure>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">01</div>
+    <div>
+      <h2>Il vocabolario minimo</h2>
+      <p>Sei parole. Se queste sono chiare, il resto del documento si legge da solo.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <dl class="gloss">
+      <div><dt>tick</dt><dd>Un battito del gioco: <b>1/50 di secondo</b>. Ogni tempo nel sistema è contato in tick, mai in secondi.</dd></div>
+      <div><dt>posa (pose record)</dt><dd>Una fotografia del corpo: i 29 angoli dei giunti in radianti. È il <em>fotogramma finale</em> di una mossa, non un pulsante che la spara.</dd></div>
+      <div><dt>placement</dt><dd>Un punto sul ring e una direzione: <code>(x, y, heading)</code>. Dove la mossa deve finire.</dd></div>
+      <div><dt>commit</dt><dd>Posa + placement, congelati e messi in coda. Irrevocabile.</dd></div>
+      <div><dt>context (clip)</dt><dd>Lo stile del movimento, scelto tra le clip del generatore — per esempio <code>walk_boxing</code>. Dice "muoviti come un pugile", non "vai lì".</dd></div>
+      <div><dt>loadout</dt><dd>Le sei pose che un fighter ha portato al match, una per tasto. Fisso per tutto l'incontro.</dd></div>
+    </dl>
+    <p>
+      La regola che tiene insieme il gioco è una sola: <strong>un commit non si annulla</strong>. Nemmeno uno
+      ancora fermo in coda. Tutto ciò che segue è, in un modo o nell'altro, la conseguenza tecnica di questa
+      scelta di design.
+    </p>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">02</div>
+    <div>
+      <h2>Che cosa contiene un commit</h2>
+      <p>Non è un comando, è un piano: <em>vai lì e arrivaci in questa posa</em>. Metà dei suoi campi li scrive
+         il giocatore, l'altra metà se li scrive da solo mentre corre.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+
+    <p>
+      Il browser non manda mai un "commit completo". Manda due messaggini minuscoli — dove sta il fantasma, e
+      "conferma" — ed è l'host a costruire il record vero. Ecco che cosa c'è dentro.
+    </p>
+
+    <div class="record">
+      <div class="record-head">
+        <span style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text-strong)">Commit</span>
+        <span class="hud">runtime/intents.py</span>
+      </div>
+      <div class="record-zone">
+        <span class="hud">Fissato nell'istante della conferma — non si riscrive mai</span>
+        <dl>
+          <div class="field"><dt>pose</dt><dd>Il pose record intero: <b>29 angoli in radianti</b>, per nome del giunto, ordine MuJoCo. Più la sua provenienza, la sua finestra di regolazione e il verdetto di ammissione.</dd></div>
+          <div class="field"><dt>placement</dt><dd><b>(x, y)</b> in metri nel mondo MuJoCo, sul piano del ring, più un <b>heading</b> in radianti. Può essere <code>null</code>: significa "falla dove sei".</dd></div>
+          <div class="field"><dt>context</dt><dd>Il nome della clip di stile, es. <code>walk_boxing</code>.</dd></div>
+          <div class="field"><dt>slot</dt><dd>Quale tasto è stato premuto, <code>"1"</code>…<code>"6"</code>.</dd></div>
+          <div class="field"><dt>adjustment</dt><dd>La correzione fine che il giocatore ha applicato alla posa base, giunto per giunto. Già applicata dentro <code>pose</code>, ma conservata a parte: il referto del match deve poter dire "jab, spostato di 4 gradi", cosa che dagli angoli finali non si ricostruisce.</dd></div>
+          <div class="field"><dt>issued_at</dt><dd>Il tick in cui il tasto è stato premuto.</dd></div>
+        </dl>
+      </div>
+      <div class="record-zone zone-runtime">
+        <span class="hud" style="color:var(--accent)">Riempito mentre la mossa corre — <code>null</code> significa "non ancora"</span>
+        <dl>
+          <div class="field"><dt>commit_at</dt><dd>Il tick in cui la mossa è <em>partita</em>: la coda l'ha fatta passare e la finestra di leggibilità è scaduta.</dd></div>
+          <div class="field"><dt>strike_at</dt><dd>Il tick in cui il fighter è <em>arrivato</em> al placement.</dd></div>
+          <div class="field"><dt>arrived</dt><dd><code>true</code> se ci è arrivato davvero, <code>false</code> se è scaduto il tempo massimo e ha tirato dov'era. Registrato, non dedotto: "l'ha tirata corta" è una cosa che un replay deve poter mostrare.</dd></div>
+          <div class="field"><dt>end_tick</dt><dd>Derivato: <code>strike_at + 74 tick</code> (1,48 s), il tempo misurato perché la posa più lenta della libreria si assesti prima che parta il commit successivo.</dd></div>
+        </dl>
+      </div>
+    </div>
+
+    <div class="note">
+      <span class="hud">Perché conta</span>
+      <p>
+        Prima della versione attuale la durata di una mossa si calcolava al momento della conferma, e l'intera
+        coda era un orario prevedibile. Ora non può esserlo: <strong>un approccio finisce quando il robot arriva</strong>,
+        e quando arriva lo decide la fisica. Chiunque legga questi campi deve trattare <code>null</code> come
+        "ancora in corso", mai come zero — un client che sbaglia questo disegna come fermo un fighter che sta
+        attraversando il ring.
+      </p>
+    </div>
+
+    <p>Sul filo, quello che il browser dice davvero è questo:</p>
+<pre><i># il giocatore trascina il fantasma sul ring — nessun round trip, il server non lo vede mai</i>
+<i># poi preme SPAZIO, e partono due messaggi:</i>
+{<b>"type"</b>: <em>"place"</em>, <b>"x"</b>: 1.2, <b>"y"</b>: -0.4, <b>"heading"</b>: 1.57}
+{<b>"type"</b>: <em>"commit"</em>}</pre>
+
+    <div class="where"><span class="hud">Nel codice</span>
+      <code>runtime/intents.py</code> <code>spec/intent.md</code> <code>spec/pose_record.md</code>
+    </div>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">03</div>
+    <div>
+      <h2>Dal browser al server</h2>
+      <p>Il client non simula, non decide, non tiene il tempo. Una sola eccezione, dichiarata: il fantasma.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <p>
+      Un WebSocket per giocatore. I messaggi di testo sono JSON di controllo, quelli binari sono le posizioni
+      dei corpi da disegnare. Le pressioni dei tasti arrivano quando arrivano e vengono applicate al
+      <strong>tick di servizio a 30 Hz</strong>: un tasto premuto entra in gioco entro 33 ms, e la simulazione
+      non aspetta mai un socket. Se un client è lento, perde il suo turno di parola, non rallenta il match.
+    </p>
+    <p>
+      Ogni messaggio è validato dall'host: uno slot che non esiste, una coordinata non finita, un commit su una
+      coda piena producono un <code>error</code> — che non tocca il match e non chiude la connessione. Il client
+      può mostrare un commit come rifiutato <em>solo</em> perché l'host l'ha detto.
+    </p>
+    <h3>L'eccezione: il fantasma vive nel browser</h3>
+    <p>
+      Il fantasma — la sagoma semitrasparente che il giocatore guida per decidere dove finirà la mossa — è
+      disegnato, mosso e cancellato interamente nel browser. Il server non lo vede finché non viene confermato.
+      Il motivo è pratico: un'anteprima che chiedesse al server dove stare prima di potersi muovere sarebbe
+      inusabile. E c'è un motivo di gioco: <strong>dove stai pensando di andare non sono affari del server</strong>,
+      e tanto meno dell'avversario.
+    </p>
+    <p>
+      Il fantasma è l'unica cinematica che il browser calcola, e la calcola da dati che l'host gli ha già dato:
+      gli angoli delle pose nel messaggio di benvenuto e l'albero dei giunti in <code>/scene.json</code>. Tutto
+      il resto che vedi a schermo sono trasformazioni di corpi già calcolate dal simulatore — il client non può
+      divergere dalla simulazione perché non ne ricostruisce nulla.
+    </p>
+    <div class="where"><span class="hud">Nel codice</span>
+      <code>server/host.py</code> <code>server/protocol.py</code> <code>client/app.js</code> <code>spec/protocol.md</code>
+    </div>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">04</div>
+    <div>
+      <h2>La coda: cinque piani, nessun ritorno</h2>
+      <p>Un fighter ha una sola coda di commit. È lì che il gioco diventa una decisione invece che una raffica
+         di tasti.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <p>
+      Un commit è accettato finché ce ne sono meno di <strong>cinque</strong> non finiti. Oltre, è rifiutato —
+      non rimandato: se venisse messo da parte per dopo, un giocatore potrebbe accumulare input e il costo di
+      impegnarsi in anticipo sparirebbe. Solo il commit più vecchio non finito è <em>corrente</em>: il successivo
+      diventa corrente nell'istante in cui il precedente termina, senza buchi, così una combinazione non
+      singhiozza.
+    </p>
+    <p>
+      Il modulo che tiene la coda è una <strong>macchina a stati, non un archivio</strong>: la funzione che
+      restituisce l'intento per un tick è anche l'orologio della coda — è la sua chiamata che fa partire un
+      approccio, che lo chiude, e quindi che decide quando comincia il commit dopo. Va chiamata esattamente una
+      volta per frame generato, con tick non decrescenti; se qualcuno la chiama all'indietro, il modulo solleva
+      un errore invece di riscrivere la storia di una mossa.
+    </p>
+  </div></div>
+
+  <figure>
+    <div class="figscroll">
+    <svg viewBox="0 0 900 300" role="img" aria-label="Linea di vita di un commit: emissione, finestra di leggibilità o attesa in coda, partenza, approccio a lunghezza aperta, arrivo, permanenza nella posa, fine.">
+      <defs>
+        <marker id="a2" class="mk-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+        <marker id="a2a" class="mk-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+      </defs>
+
+      <!-- asse -->
+      <line x1="40" y1="230" x2="870" y2="230" class="d-line" marker-end="url(#a2)"></line>
+      <text x="866" y="252" class="d-m" text-anchor="end">tempo (tick a 50 Hz)</text>
+
+      <!-- fasi -->
+      <rect x="40"  y="120" width="180" height="46" class="d-fill"></rect>
+      <rect x="40"  y="120" width="180" height="46" class="d-stroke"></rect>
+      <text x="130" y="140" class="d-t" text-anchor="middle">in attesa</text>
+      <text x="130" y="157" class="d-ts" text-anchor="middle">finestra o coda</text>
+
+      <rect x="230" y="120" width="330" height="46" class="d-fill-clay"></rect>
+      <rect x="230" y="120" width="330" height="46" class="d-stroke-clay"></rect>
+      <text x="395" y="140" class="d-t" text-anchor="middle">approccio — lunghezza aperta</text>
+      <text x="395" y="157" class="d-ts" text-anchor="middle">cammina verso il placement, con la posa già puntata</text>
+
+      <rect x="570" y="120" width="200" height="46" class="d-fill-accent"></rect>
+      <rect x="570" y="120" width="200" height="46" class="d-stroke-accent"></rect>
+      <text x="670" y="140" class="d-t" text-anchor="middle">permanenza</text>
+      <text x="670" y="157" class="d-ts" text-anchor="middle">74 tick · 1,48 s</text>
+
+      <!-- pietre miliari -->
+      <line x1="40"  y1="110" x2="40"  y2="238" class="d-line"></line>
+      <line x1="230" y1="110" x2="230" y2="238" class="d-line"></line>
+      <line x1="570" y1="110" x2="570" y2="238" class="d-line-accent"></line>
+      <line x1="770" y1="110" x2="770" y2="238" class="d-line"></line>
+
+      <text x="40"  y="98" class="d-m" text-anchor="start">issued_at</text>
+      <text x="40"  y="84" class="d-ts" text-anchor="start">tasto premuto</text>
+      <text x="230" y="98" class="d-m" text-anchor="middle">commit_at</text>
+      <text x="230" y="84" class="d-ts" text-anchor="middle">parte</text>
+      <text x="570" y="98" class="d-ma" text-anchor="middle">strike_at</text>
+      <text x="570" y="84" class="d-ts" text-anchor="middle">arrivato</text>
+      <text x="770" y="98" class="d-m" text-anchor="middle">end_tick</text>
+      <text x="770" y="84" class="d-ts" text-anchor="middle">finito</text>
+
+      <!-- condizioni sotto l'asse -->
+      <text x="130" y="272" class="d-m" text-anchor="middle">≥ 30 tick dopo l'emissione,</text>
+      <text x="130" y="286" class="d-m" text-anchor="middle">e non prima che finisca quello davanti</text>
+      <text x="395" y="272" class="d-mc" text-anchor="middle">finisce quando il bacino è entro 0,40 m dal punto</text>
+      <text x="395" y="286" class="d-mc" text-anchor="middle">oppure allo scadere di 8,4 s → tira dov'è</text>
+      <text x="670" y="272" class="d-ma" text-anchor="middle">strike_at + 74</text>
+
+      <!-- coda -->
+      <text x="40" y="36" class="d-m">la coda, al massimo cinque:</text>
+      <rect x="230" y="22" width="88" height="20" class="d-fill-clay"></rect><rect x="230" y="22" width="88" height="20" class="d-stroke-clay"></rect>
+      <text x="274" y="36" class="d-m" text-anchor="middle">corrente</text>
+      <rect x="326" y="22" width="88" height="20" class="d-fill"></rect><rect x="326" y="22" width="88" height="20" class="d-stroke"></rect>
+      <text x="370" y="36" class="d-m" text-anchor="middle">in attesa</text>
+      <rect x="422" y="22" width="88" height="20" class="d-fill"></rect><rect x="422" y="22" width="88" height="20" class="d-stroke"></rect>
+      <text x="466" y="36" class="d-m" text-anchor="middle">in attesa</text>
+      <rect x="518" y="22" width="88" height="20" class="d-fill"></rect><rect x="518" y="22" width="88" height="20" class="d-stroke"></rect>
+      <text x="562" y="36" class="d-m" text-anchor="middle">in attesa</text>
+      <rect x="614" y="22" width="88" height="20" class="d-fill"></rect><rect x="614" y="22" width="88" height="20" class="d-stroke"></rect>
+      <text x="658" y="36" class="d-m" text-anchor="middle">in attesa</text>
+      <text x="716" y="36" class="d-m">← il sesto viene rifiutato</text>
+    </svg>
+    </div>
+    <figcaption>
+      <b>La vita di un commit.</b> Solo l'ultimo segmento ha una lunghezza nota in anticipo. L'attesa dipende da
+      chi c'è davanti, l'approccio dipende dalla distanza e dalla fisica: per questo <code>commit_at</code>,
+      <code>strike_at</code> e <code>end_tick</code> si scrivono strada facendo. Un jab tirato dove sei dura circa
+      un secondo; lo stesso jab piazzato dall'altra parte del ring ne dura sei, e cinque di quei secondi sono la
+      camminata.
+    </figcaption>
+  </figure>
+
+  <div class="body"><div></div><div class="col">
+    <p>
+      Quando la coda si svuota il fighter <strong>non torna in posizione neutra</strong>: l'intento dell'ultimo
+      commit resta puntato, e il generatore continua a interpolare verso un bersaglio che ha già raggiunto. È un
+      punto fisso, ed è tutta l'implementazione del "tieni la posa". La versione precedente qui passava a una
+      clip di riposo, e il generatore obbediente interpolava <em>fuori</em> dalla posa che il giocatore aveva
+      appena pagato — la posa esisteva per un fotogramma solo. L'unico posto in cui la clip di riposo sopravvive
+      è la campana d'inizio, prima che ci sia un commit da tenere.
+    </p>
+    <div class="where"><span class="hud">Nel codice</span>
+      <code>runtime/intents.py</code> <code>runtime/fight.py</code>
+    </div>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">05</div>
+    <div>
+      <h2>La catena completa, in un colpo d'occhio</h2>
+      <p>Da qui in poi il documento entra nelle due reti. Questa è la mappa: che cosa passa a chi, di che forma
+         e a che ritmo.</p>
+    </div>
+  </div>
+
+  <figure>
+    <div class="figscroll">
+    <svg viewBox="0 0 900 742" role="img" aria-label="Catena dati completa: intento, MotionBricks a 30 Hz, bridge a 50 Hz, encoder, decoder, conversione in target di posizione, controllo PD, MuJoCo, con i due ritorni verso la politica e verso il generatore.">
+      <defs>
+        <marker id="a3" class="mk-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+        <marker id="a3a" class="mk-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+        <marker id="a3c" class="mk-clay" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+      </defs>
+
+      <!-- 1 intento -->
+      <rect x="150" y="14" width="360" height="56" rx="3" class="d-fill"></rect>
+      <rect x="150" y="14" width="360" height="56" rx="3" class="d-stroke"></rect>
+      <text x="330" y="38" class="d-t" text-anchor="middle">Intento del tick</text>
+      <text x="330" y="56" class="d-ts" text-anchor="middle">stile · posa (29 angoli) · placement (x, y, heading)</text>
+
+      <line x1="330" y1="70" x2="330" y2="100" class="d-line" marker-end="url(#a3)"></line>
+      <text x="342" y="89" class="d-m">una domanda per ogni fotogramma da generare</text>
+
+      <!-- 2 motionbricks -->
+      <rect x="150" y="100" width="360" height="66" rx="3" class="d-fill-accent"></rect>
+      <rect x="150" y="100" width="360" height="66" rx="3" class="d-stroke-accent"></rect>
+      <text x="330" y="126" class="d-t" text-anchor="middle">MotionBricks — rete generativa</text>
+      <text x="330" y="144" class="d-ts" text-anchor="middle">interpola dal contesto al bersaglio · ripianifica ogni 0,5 s</text>
+      <text x="330" y="159" class="d-ma" text-anchor="middle">una istanza per fighter, su GPU</text>
+
+      <line x1="330" y1="166" x2="330" y2="204" class="d-line-accent" marker-end="url(#a3a)"></line>
+      <text x="342" y="181" class="d-ma">qpos (36,) a 30 Hz</text>
+      <text x="342" y="195" class="d-m">3 posizione + 4 quaternione + 29 giunti</text>
+
+      <!-- 3 bridge -->
+      <rect x="150" y="204" width="360" height="60" rx="3" class="d-fill"></rect>
+      <rect x="150" y="204" width="360" height="60" rx="3" class="d-stroke"></rect>
+      <text x="330" y="228" class="d-t" text-anchor="middle">Bridge — 30 → 50 Hz</text>
+      <text x="330" y="246" class="d-ts" text-anchor="middle">slerp sul quaternione, velocità per differenze finite</text>
+
+      <line x1="330" y1="264" x2="330" y2="300" class="d-line-accent" marker-end="url(#a3a)"></line>
+      <text x="342" y="279" class="d-ma">movimento di riferimento a 50 Hz</text>
+      <text x="342" y="293" class="d-m">più le velocità dei giunti</text>
+
+      <!-- 4 encoder -->
+      <rect x="150" y="300" width="360" height="66" rx="3" class="d-fill-accent"></rect>
+      <rect x="150" y="300" width="360" height="66" rx="3" class="d-stroke-accent"></rect>
+      <text x="330" y="325" class="d-t" text-anchor="middle">GEAR-SONIC · encoder (ONNX)</text>
+      <text x="330" y="343" class="d-ts" text-anchor="middle">legge 10 fotogrammi futuri: t, t+5, …, t+45</text>
+      <text x="330" y="358" class="d-ma" text-anchor="middle">1762 in → 64 token</text>
+
+      <line x1="330" y1="366" x2="330" y2="404" class="d-line-accent" marker-end="url(#a3a)"></line>
+      <text x="342" y="388" class="d-ma">64 numeri: "il movimento da inseguire"</text>
+
+      <!-- 5 decoder -->
+      <rect x="150" y="404" width="360" height="66" rx="3" class="d-fill-accent"></rect>
+      <rect x="150" y="404" width="360" height="66" rx="3" class="d-stroke-accent"></rect>
+      <text x="330" y="429" class="d-t" text-anchor="middle">GEAR-SONIC · decoder (ONNX)</text>
+      <text x="330" y="447" class="d-ts" text-anchor="middle">64 token + 930 di storia del corpo</text>
+      <text x="330" y="462" class="d-ma" text-anchor="middle">994 in → 29 azioni</text>
+
+      <!-- ingresso storia da sinistra -->
+      <rect x="10" y="404" width="128" height="66" rx="3" class="d-fill-clay"></rect>
+      <rect x="10" y="404" width="128" height="66" rx="3" class="d-stroke-clay"></rect>
+      <text x="74" y="428" class="d-t" text-anchor="middle">Storia del corpo</text>
+      <text x="74" y="445" class="d-ts" text-anchor="middle">ultimi 10 tick</text>
+      <text x="74" y="461" class="d-mc" text-anchor="middle">930 dim.</text>
+      <path d="M138 437 L146 437" class="d-line-clay" marker-end="url(#a3c)"></path>
+
+      <line x1="330" y1="470" x2="330" y2="506" class="d-line-accent" marker-end="url(#a3a)"></line>
+      <text x="342" y="491" class="d-ma">29 azioni grezze</text>
+
+      <!-- 6 conversione -->
+      <rect x="150" y="506" width="360" height="52" rx="3" class="d-fill"></rect>
+      <rect x="150" y="506" width="360" height="52" rx="3" class="d-stroke"></rect>
+      <text x="330" y="529" class="d-t" text-anchor="middle">azione × scala + angolo di riposo</text>
+      <text x="330" y="546" class="d-ts" text-anchor="middle">→ 29 target di posizione dei giunti</text>
+
+      <line x1="330" y1="558" x2="330" y2="590" class="d-line" marker-end="url(#a3)"></line>
+
+      <!-- 7 PD -->
+      <rect x="150" y="590" width="360" height="52" rx="3" class="d-fill"></rect>
+      <rect x="150" y="590" width="360" height="52" rx="3" class="d-stroke"></rect>
+      <text x="330" y="613" class="d-t" text-anchor="middle">Controllo PD a 1 kHz — 20 sottopassi</text>
+      <text x="330" y="630" class="d-ts" text-anchor="middle">coppie limitate al massimo del motore</text>
+
+      <line x1="330" y1="642" x2="330" y2="674" class="d-line" marker-end="url(#a3)"></line>
+
+      <rect x="150" y="674" width="360" height="52" rx="3" class="d-fill"></rect>
+      <rect x="150" y="674" width="360" height="52" rx="3" class="d-stroke"></rect>
+      <text x="330" y="697" class="d-t" text-anchor="middle">MuJoCo — la fisica decide</text>
+      <text x="330" y="714" class="d-ts" text-anchor="middle">se il colpo arriva, se il robot resta in piedi</text>
+
+      <!-- ritorni -->
+      <path d="M150 700 L74 700 L74 474" class="d-line-clay d-dash" marker-end="url(#a3c)"></path>
+      <text x="64" y="590" class="d-mc" transform="rotate(-90 64 590)" text-anchor="middle">stato misurato</text>
+
+      <path d="M510 700 L884 700 L884 133 L514 133" class="d-line-clay d-dash" marker-end="url(#a3c)"></path>
+      <text x="697" y="722" class="d-mc" text-anchor="middle">posizione reale del bacino → arrivo e ripianificazione</text>
+    </svg>
+    </div>
+    <figcaption>
+      <b>La catena, con le forme dei dati sulle frecce.</b> Le due reti NVIDIA sono i due riquadri verdi centrali e
+      girano <em>tutte e due a ogni tick</em>, per ogni fighter: due inferenze × due robot × 50 volte al secondo.
+      I due ritorni tratteggiati sono ciò che rende il sistema stabile: senza quello di sinistra la politica non
+      saprebbe in che stato è il corpo che sta comandando; senza quello di destra il generatore continuerebbe a
+      pianificare da dove <em>crede</em> di essere.
+    </figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">06</div>
+    <div>
+      <h2>MotionBricks: l'intento diventa movimento</h2>
+      <p>La prima rete. Non sa niente di fisica, di collisioni e di gravità — e questo è precisamente il suo
+         mestiere.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <p>
+      MotionBricks è un modello generativo di movimento umanoide: gli si dà un <em>contesto</em> (gli ultimi
+      fotogrammi, cioè da dove il corpo sta arrivando) e un <em>bersaglio</em>, e produce l'interpolazione tra i
+      due. Il punto da tenere a mente, perché spiega quasi ogni scelta a valle:
+      <strong>il bersaglio è l'ultimo fotogramma del piano</strong>. Non un attrattore verso cui tendere: proprio
+      la fine della traiettoria generata.
+    </p>
+    <p>
+      Ogni fighter ha la <strong>sua</strong> istanza, con il suo seme casuale. Non è un dettaglio di
+      configurazione: due generatori che condividessero anche solo il flusso di numeri casuali si
+      influenzerebbero a vicenda, ed è stato misurato — il piano del rosso cambiava a seconda di quanto era stato
+      pilotato il blu. Costa 1,5 GB di memoria video su una scheda da 49 GB e circa 30 ms per ripianificare
+      entrambi, che spalmati sul mezzo secondo tra due ripianificazioni fanno poco più di 1 ms su un budget di
+      20. L'isolamento è strutturale, non una proprietà da mantenere.
+    </p>
+
+    <h3>Che cosa gli si dice, esattamente</h3>
+    <p>
+      L'intento che arriva al generatore contiene la clip di stile, una direzione di movimento e una di
+      sguardo, il bersaglio di posizione e heading, e — questa è la parte aggiunta da OpenRoboxing — la
+      <strong>posa autorata</strong>. Il modello di serie campionava la posa finale dalla libreria di clip; per
+      farla scegliere al giocatore serve una singola modifica al codice NVIDIA, registrata e minima: un punto di
+      innesto che, se ci sono le due matrici della posa, le usa al posto di quelle campionate.
+    </p>
+    <p>
+      La conversione la fa OpenRoboxing, non l'upstream: il pose record ha <strong>29 angoli</strong> (lo spazio
+      in cui pensano un autore, un robot e una misura di errore), mentre il generatore ragiona su uno scheletro
+      di <strong>34 giunti</strong>. I cinque in più sono derivabili — il bacino arriva dal placement, due sono
+      giunti fittizi delle dita dei piedi, due non esistono sul G1 a 29 gradi di libertà. La cinematica diretta
+      che li espande vive nello Studio, mai nel runtime.
+    </p>
+
+    <h3>La posa è puntata sempre, non solo alla fine</h3>
+    <p>
+      Un commit è <strong>un solo intento per tutta la sua vita</strong>: "sii a quel punto, in quella posa". La
+      posa è armata a ogni ripianificazione, anche mentre il fighter sta ancora camminando. Sembra una
+      sottigliezza ed è la differenza tra un gioco che funziona e uno che non funziona: misurato contro un
+      placement a 2,5 m, con la posa puntata durante il tragitto la <code>hook-right</code> chiude da 2,500 m a
+      0,028 m e da 17,0° a 6,0°, e poi <em>tiene</em>. Gli stessi sei secondi con la posa trattenuta fino
+      all'arrivo non convergono affatto: 17,0° → 18,5°.
+    </p>
+    <div class="where"><span class="hud">Nel codice</span>
+      <code>runtime/generator.py</code> <code>runtime/pool.py</code> <code>studio/skeleton_fk.py</code> <code>spec/upstream_patches.md</code>
+    </div>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">07</div>
+    <div>
+      <h2>Il bridge: 30 diventa 50</h2>
+      <p>Il pezzo meno spettacolare e più pericoloso della catena: qui vivono quasi tutti i bug possibili, e
+         nessuno di essi fa rumore.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <p>
+      Il generatore produce a 30 Hz, la politica consuma a 50 Hz. Ogni 3 fotogrammi generati diventano 5 tick di
+      controllo. Tre regole, tutte imparate sbagliando:
+    </p>
+    <ul>
+      <li><strong>Il quaternione della radice si interpola con lo slerp</strong>, non componente per componente:
+          la media di due quaternioni, presa numero per numero, non è una rotazione.</li>
+      <li><strong>Le velocità si calcolano dopo il ricampionamento</strong>, mai prima. Derivare e poi
+          interpolare spalma ogni campione sui vicini e sottostima i picchi — cioè esattamente le parti veloci di
+          un pugno.</li>
+      <li><strong>Ogni ordine di giunti si deriva per nome.</strong> L'ordine MuJoCo e quello IsaacLab non
+          coincidono, e una permutazione copiata a mano da una documentazione è la fonte più probabile di un bug
+          catastrofico e silenzioso. Le tabelle esistono, ma solo come bersaglio di un'asserzione.</li>
+    </ul>
+    <p>
+      Il bridge produce anche una cosa che non è ovvia: il flusso di riferimento è tenuto <em>avanti</em> rispetto
+      al tick che lo consuma, perché la rete encoder guarda il movimento futuro. Se il buffer resta corto, il
+      riferimento verrebbe silenziosamente bloccato sull'ultimo fotogramma — che a schermo somiglia a un fighter
+      che si congela a metà mossa senza motivo. Per questo il sistema solleva un errore invece di riempire di
+      zeri: <strong>un'osservazione plausibile ma sbagliata è peggio di un crash</strong>.
+    </p>
+    <div class="where"><span class="hud">Nel codice</span>
+      <code>runtime/bridge.py</code> <code>runtime/reference.py</code> <code>runtime/conventions.py</code>
+    </div>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">08</div>
+    <div>
+      <h2>GEAR-SONIC: il movimento diventa comandi</h2>
+      <p>La seconda rete, in realtà due: un encoder che riassume dove deve andare il corpo, e un decoder che
+         decide come muovere i 29 giunti per arrivarci.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <p>
+      GEAR-SONIC è la politica whole-body di GR00T-WBC, addestrata a inseguire un movimento di riferimento
+      restando in piedi. Gira come due grafi ONNX, in sequenza, a ogni tick.
+    </p>
+
+    <h3>L'encoder — 1762 numeri in, 64 fuori</h3>
+    <p>
+      L'ingresso è una vista sul movimento di riferimento. Non "adesso": <strong>dieci fotogrammi futuri</strong>,
+      presi a t, t+5, t+10 … t+45, cioè fino a 0,9 secondi avanti. Di quei 1762 numeri, in questa modalità solo
+      644 portano informazione — posizioni dei giunti di riferimento, loro velocità, e l'orientamento del
+      riferimento visto dal busto del robot. Il resto è strutturalmente zero, e non viene nemmeno calcolato.
+      In uscita: <strong>64 token</strong>, che sono il riassunto compresso di "ecco il movimento da inseguire".
+    </p>
+
+    <h3>Il decoder — 994 in, 29 azioni fuori</h3>
+    <p>I 994 numeri sono la somma di due mondi:</p>
+    <div class="tablewrap">
+      <table>
+        <caption>Composizione dell'ingresso della politica</caption>
+        <thead><tr><th>Termine</th><th>Dim.</th><th>Che cos'è</th></tr></thead>
+        <tbody>
+          <tr><td><code>token_state</code></td><td class="num">64</td><td>l'uscita dell'encoder: dove deve andare il corpo</td></tr>
+          <tr><td><code>his_base_angular_velocity</code></td><td class="num">30</td><td>10 tick × velocità angolare del busto (IMU)</td></tr>
+          <tr><td><code>his_body_joint_positions</code></td><td class="num">290</td><td>10 tick × 29 angoli misurati</td></tr>
+          <tr><td><code>his_body_joint_velocities</code></td><td class="num">290</td><td>10 tick × 29 velocità misurate</td></tr>
+          <tr><td><code>his_last_actions</code></td><td class="num">290</td><td>10 tick × le 29 azioni che ha prodotto lei stessa</td></tr>
+          <tr><td><code>his_gravity_dir</code></td><td class="num">30</td><td>10 tick × direzione della gravità nel sistema del busto</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Metà del suo ingresso, quindi, è la <strong>storia recente del proprio corpo</strong>: com'era messo,
+      quanto stava andando veloce, da che parte è il basso, e che cosa ha già chiesto ai motori nei dieci tick
+      precedenti. È così che una politica di controllo mantiene l'equilibrio: non le basta sapere dove deve
+      andare, deve sapere in che stato si trova mentre ci va.
+    </p>
+    <p>
+      L'uscita sono 29 numeri grezzi. Diventano comandi con una riga di aritmetica —
+      <code>target = azione × scala + angolo di riposo</code> — dove la scala è per giunto e deriva dal limite di
+      coppia del motore. Da lì in poi non è più machine learning, è controllo classico.
+    </p>
+    <div class="note">
+      <span class="hud">Un dettaglio che vale un match</span>
+      <p>
+        La politica è <strong>una sola istanza condivisa dai due fighter</strong>, e può esserlo perché non
+        contiene stato: tiene solo le due sessioni ONNX, mentre tutta la storia sta nell'oggetto osservazione di
+        ciascun fighter. Il generatore, al contrario, non è condivisibile per niente. Le due cose sembrano
+        simmetriche e non lo sono.
+      </p>
+    </div>
+    <div class="where"><span class="hud">Nel codice</span>
+      <code>runtime/policy.py</code> <code>runtime/obs.py</code> <code>parity/</code>
+    </div>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">09</div>
+    <div>
+      <h2>La fisica decide</h2>
+      <p>Nessuno dichiara che un pugno è andato a segno. Il colpo esiste se e solo se due corpi si toccano nel
+         simulatore.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <p>
+      A ogni tick si calcolano <strong>prima le coppie di entrambi</strong> i fighter, e solo dopo si avanza la
+      fisica — perché <code>mj_step</code> avanza tutto il modello insieme. Calcolare il rosso, avanzare, e poi
+      calcolare il blu darebbe al rosso mezzo tick di vantaggio a ogni scambio: invisibile, e decisivo su tre
+      riprese.
+    </p>
+    <p>
+      Il controllo PD gira al ritmo della <em>fisica</em>, non del controllo: 20 sottopassi da 1 ms per ogni tick
+      da 20 ms, rileggendo posizione e velocità dei giunti a ogni sottopasso contro un bersaglio che resta fermo
+      per tutto il tick. Ogni coppia è tagliata al limite del suo motore, letto dal modello compilato e non da
+      una tabella — perché è quello che MuJoCo applica davvero.
+    </p>
+    <div class="note">
+      <span class="hud">Trappola documentata</span>
+      <p>
+        Un limite letto da un campo mai impostato vale zero, e zero è un numero dall'aria perfettamente valida.
+        È già successo: le coppie venivano tagliate a zero, il robot si accasciava, e sembrava un problema di
+        fisica. Ora la funzione che li legge prova ogni fonte possibile e <strong>solleva un errore</strong> se
+        non ne trova nessuna. Stessa famiglia di trappola: esistono due file del robot G1 identici in tutto
+        tranne che nell'inerzia del rotore e nello smorzamento — con quello sbagliato, un fighter collassa in
+        mezzo secondo.
+      </p>
+    </div>
+    <p>
+      C'è un limite onesto da conoscere: <strong>prendere un pugno è fuori distribuzione</strong> per la politica
+      upstream, che è stata addestrata penalizzando i contatti fuori da piedi, mani e gomiti. Un comportamento
+      strano all'impatto non è un bug da tappare nel runtime: è una linea di ricerca aperta.
+    </p>
+    <div class="where"><span class="hud">Nel codice</span>
+      <code>runtime/fight.py</code> <code>runtime/arena.py</code> <code>runtime/contact.py</code> <code>runtime/match.py</code>
+    </div>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">10</div>
+    <div>
+      <h2>Il ciclo si chiude</h2>
+      <p>Il generatore è cinematico: il suo piano arriva sempre a destinazione. Il robot che lo insegue, sotto
+         gravità e attrito, arriva corto. Colmare quella differenza è tutto il mestiere.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <p>
+      Il placement che il giocatore indica è un punto sul ring che lui vede. Il generatore, invece, pianifica in
+      un sistema di riferimento tutto suo, che parte da dove è partita la sua clip. Passargli le coordinate del
+      mondo così come sono manda ogni fighter fuori bersaglio di quanto è ruotato il suo sistema — e il bello è
+      che il robot cammina una distanza plausibile, nella direzione sbagliata.
+    </p>
+    <p>
+      La conversione corretta si dice in una frase: <em>da dove sta il generatore, percorri il vettore che va dal
+      robot al bersaglio</em>. Due ancoraggi diversi, e uno solo funziona.
+    </p>
+  </div></div>
+
+  <figure>
+    <div class="figscroll">
+    <svg viewBox="0 0 900 300" role="img" aria-label="Confronto tra due ancoraggi: misurare la distanza dal robot e applicarla dalla coda del buffer del generatore converge a 0,1 metri; ancorarla al fotogramma corrente lascia un errore del 27 per cento.">
+      <defs>
+        <marker id="a4" class="mk-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+        <marker id="a4a" class="mk-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+        <marker id="a4c" class="mk-clay" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+      </defs>
+
+      <!-- pannello sinistro: funziona -->
+      <text x="30" y="26" class="d-ma">ANCORATO ALLA CODA DEL BUFFER — INTEGRATORE</text>
+      <line x1="30" y1="120" x2="420" y2="120" class="d-stroke d-dash"></line>
+
+      <circle cx="70" cy="120" r="7" class="d-fill-clay"></circle>
+      <circle cx="70" cy="120" r="7" class="d-stroke-clay"></circle>
+      <text x="70" y="148" class="d-m" text-anchor="middle">robot</text>
+      <text x="70" y="161" class="d-ts" text-anchor="middle">dov'è davvero</text>
+
+      <circle cx="200" cy="120" r="7" class="d-fill-accent"></circle>
+      <circle cx="200" cy="120" r="7" class="d-stroke-accent"></circle>
+      <text x="200" y="148" class="d-ma" text-anchor="middle">coda del piano</text>
+      <text x="200" y="161" class="d-ts" text-anchor="middle">un lookahead più avanti</text>
+
+      <line x1="390" y1="104" x2="390" y2="136" class="d-line-accent"></line>
+      <text x="390" y="148" class="d-ma" text-anchor="middle">bersaglio</text>
+
+      <!-- vettore misurato -->
+      <path d="M70 96 L386 96" class="d-line-clay" marker-end="url(#a4c)"></path>
+      <text x="228" y="88" class="d-mc" text-anchor="middle">① misurato dal robot</text>
+      <!-- applicato dalla coda -->
+      <path d="M200 176 L420 176" class="d-line-accent" marker-end="url(#a4a)"></path>
+      <text x="300" y="196" class="d-ma" text-anchor="middle">② applicato dalla coda → il piano corre avanti</text>
+      <text x="225" y="232" class="d-t" text-anchor="middle">converge a ~0,1 m e ci resta</text>
+      <text x="225" y="252" class="d-ts" text-anchor="middle">l'errore residuo viene rimisurato ogni fotogramma,</text>
+      <text x="225" y="268" class="d-ts" text-anchor="middle">quindi si accumula finché il corpo non ha recuperato</text>
+
+      <!-- separatore -->
+      <line x1="455" y1="14" x2="455" y2="286" class="d-stroke"></line>
+
+      <!-- pannello destro: non funziona -->
+      <text x="485" y="26" class="d-mc">ANCORATO AL FOTOGRAMMA CORRENTE — PROPORZIONALE</text>
+      <line x1="485" y1="120" x2="875" y2="120" class="d-stroke d-dash"></line>
+
+      <circle cx="525" cy="120" r="7" class="d-fill-clay"></circle>
+      <circle cx="525" cy="120" r="7" class="d-stroke-clay"></circle>
+      <text x="525" y="148" class="d-m" text-anchor="middle">robot</text>
+
+      <line x1="845" y1="104" x2="845" y2="136" class="d-line-accent"></line>
+      <text x="845" y="148" class="d-ma" text-anchor="middle">bersaglio</text>
+
+      <path d="M525 96 L841 96" class="d-line-clay" marker-end="url(#a4c)"></path>
+      <text x="683" y="88" class="d-mc" text-anchor="middle">misurato dal robot, applicato da dove è il robot</text>
+
+      <line x1="765" y1="104" x2="765" y2="136" class="d-line-clay d-dash"></line>
+      <text x="765" y="163" class="d-mc" text-anchor="middle">si ferma qui</text>
+      <path d="M765 176 L841 176" class="d-line-clay" marker-end="url(#a4c)"></path>
+      <text x="803" y="196" class="d-mc" text-anchor="middle">resta fuori</text>
+
+      <text x="680" y="232" class="d-t" text-anchor="middle">si assesta al 27 % della distanza chiesta</text>
+      <text x="680" y="252" class="d-ts" text-anchor="middle">0,22 m a 1 m · 0,49 m a 2 m · 0,81 m a 3 m</text>
+      <text x="680" y="268" class="d-ts" text-anchor="middle">il lookahead viene cancellato, e resta lo scarto di inseguimento</text>
+    </svg>
+    </div>
+    <figcaption>
+      <b>Due ancoraggi difendibili, uno solo arriva.</b> Misurare la distanza dal <em>robot</em> è la
+      retroazione; applicarla dalla <em>coda del buffer</em> — che è già avanti — è ciò che la fa integrare.
+      L'alternativa di destra sembra più corretta perché cancella il lookahead, ma trasforma l'anello in un
+      controllore proporzionale il cui errore a regime è esattamente lo scarto di inseguimento della politica.
+      Un integratore che sembra sbagliato batte un proporzionale che sembra giusto.
+    </figcaption>
+  </figure>
+
+  <div class="body"><div></div><div class="col">
+    <p>
+      Il test di arrivo, allo stesso modo, si fa <strong>sul robot vero sotto fisica</strong>, non sul piano: il
+      piano arriva sempre, il corpo che lo insegue è la cosa che deve davvero arrivarci. La soglia è
+      <strong>0,40 m</strong> tra bacino e punto, ed è misurata: su dieci placement attorno a un fighter il
+      peggior avvicinamento è stato 0,30 m. Più stretta di così, un approccio può non chiudere mai — e non
+      significa solo mancare il bersaglio: significa bloccare tutta la coda dietro di sé fino allo scadere del
+      tempo massimo.
+    </p>
+    <div class="where"><span class="hud">Nel codice</span>
+      <code>runtime/fight.py</code> — <code>to_generator_frame</code>, <code>has_arrived</code>, <code>facing_angle</code>
+    </div>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">11</div>
+    <div>
+      <h2>Gli orologi, e il ritardo che ne consegue</h2>
+      <p>Quattro ritmi diversi, deliberatamente. E un numero scomodo che vale la pena conoscere prima di
+         progettarci sopra.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <div class="tablewrap">
+      <table>
+        <caption>I ritmi del sistema</caption>
+        <thead><tr><th>Che cosa</th><th>Ritmo</th><th>Perché</th></tr></thead>
+        <tbody>
+          <tr><td>Fisica</td><td class="num">1000 Hz</td><td>fedeltà dei contatti: 20 sottopassi per tick</td></tr>
+          <tr><td>Controllo (tick)</td><td class="num">50 Hz</td><td>il ritmo della politica; ogni tick del progetto è questo</td></tr>
+          <tr><td>Generatore</td><td class="num">30 Hz</td><td>l'uscita nativa di MotionBricks</td></tr>
+          <tr><td>Servizio degli intenti</td><td class="num">30 Hz</td><td>i tasti entrano qui, la simulazione non aspetta mai un socket</td></tr>
+          <tr><td>Stream verso il browser</td><td class="num">30 FPS</td><td>solo visualizzazione</td></tr>
+          <tr><td>Ripianificazione</td><td class="num">ogni 0,5 s</td><td>quanto spesso il generatore riscrive il piano</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      Il ritardo tra "premo il tasto" e "il fighter comincia a muoversi" <strong>non è</strong> la finestra di
+      0,6 s dichiarata dal design. Quella finestra esiste, ma non è mai lei a vincolare.
+    </p>
+  </div></div>
+
+  <figure>
+    <div class="figscroll">
+    <svg viewBox="0 0 900 220" role="img" aria-label="Righello dei tick: la finestra di leggibilità di 30 tick è più corta della somma tra il lookahead dell'encoder di 45 tick e il margine del generatore di 20 tick, quindi il primo tick influenzabile è a 65 tick, cioè 1,3 secondi.">
+      <defs>
+        <marker id="a5" class="mk-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+        <marker id="a5a" class="mk-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><polygon points="0,0 10,5 0,10"></polygon></marker>
+      </defs>
+
+      <!-- righello -->
+      <line x1="60" y1="150" x2="860" y2="150" class="d-line"></line>
+      <line x1="60"  y1="144" x2="60"  y2="156" class="d-line"></line>
+      <line x1="245" y1="144" x2="245" y2="156" class="d-line"></line>
+      <line x1="522" y1="144" x2="522" y2="156" class="d-line"></line>
+      <line x1="645" y1="140" x2="645" y2="160" class="d-line-accent"></line>
+      <text x="60"  y="176" class="d-m" text-anchor="middle">0</text>
+      <text x="245" y="176" class="d-m" text-anchor="middle">30 tick · 0,60 s</text>
+      <text x="522" y="176" class="d-m" text-anchor="middle">45 tick · 0,90 s</text>
+      <text x="645" y="176" class="d-ma" text-anchor="middle">65 tick · 1,30 s</text>
+      <text x="60"  y="196" class="d-ts" text-anchor="middle">ora</text>
+      <text x="645" y="196" class="d-ts" text-anchor="middle">primo tick che un commit può cambiare</text>
+
+      <!-- barre -->
+      <rect x="60" y="34" width="462" height="26" class="d-fill-accent"></rect>
+      <rect x="60" y="34" width="462" height="26" class="d-stroke-accent"></rect>
+      <text x="291" y="52" class="d-t" text-anchor="middle">lookahead dell'encoder — 45 tick</text>
+      <text x="536" y="52" class="d-ts">strutturale: la rete deve vedere il riferimento davanti a sé</text>
+
+      <rect x="522" y="68" width="123" height="26" class="d-fill-accent"></rect>
+      <rect x="522" y="68" width="123" height="26" class="d-stroke-accent"></rect>
+      <text x="583" y="86" class="d-t" text-anchor="middle">margine — 20</text>
+      <text x="658" y="86" class="d-ts">una scelta nostra, l'unica parte negoziabile</text>
+
+      <rect x="60" y="102" width="185" height="26" class="d-fill"></rect>
+      <rect x="60" y="102" width="185" height="26" class="d-stroke"></rect>
+      <text x="152" y="120" class="d-t" text-anchor="middle">finestra dichiarata — 30</text>
+      <text x="258" y="120" class="d-ts">inerte: non vincola mai, perché è più corta della somma sopra</text>
+    </svg>
+    </div>
+    <figcaption>
+      <b>Dove finisce davvero il ritardo.</b> Tutto ciò che sta prima del tick 65 è già stato generato, e
+      rigenerarlo significherebbe cancellare il piano in corso. 0,6 s di preavviso leggibile sono una scelta di
+      design; 1,3 s di ritardo d'ingresso sono un gioco diverso. I 0,4 s del margine sono l'unica parte su cui
+      si può lavorare, ed è una domanda aperta per il primo torneo.
+    </figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">12</div>
+    <div>
+      <h2>Che cosa torna indietro</h2>
+      <p>Il flusso di ritorno è progettato tanto su ciò che <em>non</em> manda quanto su ciò che manda.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <p>
+      Trenta volte al secondo ogni client riceve due cose. Un <strong>fotogramma binario</strong>: intestazione
+      più posizione e quaternione di ogni corpo, circa 1,7 kB. Gli stessi identici byte per tutti, perché
+      contengono solo i due fighter reali e quindi non c'è niente di privato dentro. E un <strong>messaggio
+      JSON di stato</strong>, che invece è <em>composto per destinatario</em>.
+    </p>
+    <p>
+      La geometria — le mesh del robot, circa 9 MB — viaggia una volta sola all'inizio e resta in cache. La
+      versione precedente del protocollo mandava JPEG renderizzati dal server: 750 kB/s per spettatore contro
+      55 kB/s di adesso, e con una telecamera decisa dal server. La banda in più si ripaga in venticinque
+      secondi di gioco.
+    </p>
+    <h3>Che cosa è privato, e perché</h3>
+    <ul>
+      <li><strong>La posa che stai preparando</strong>: nessuno la vede.</li>
+      <li><strong>Il tuo fantasma</strong>: non esce nemmeno dal browser.</li>
+      <li><strong>I commit in coda non ancora partiti</strong>: pagati, ma non ancora mostrati. Trasmetterli
+          regalerebbe all'avversario l'elenco leggibile delle tue prossime quattro mosse, che è esattamente il
+          rischio che la coda deve essere.</li>
+      <li><strong>Il commit in esecuzione</strong>, invece, è pubblico: è già visibile nel ring, e la
+          preparazione del movimento è l'unico indizio che il gioco concede.</li>
+    </ul>
+    <p>
+      Un campo merita una nota: <code>can_commit</code>. Esiste perché il client possa disattivare un tasto
+      <em>senza conoscere la regola</em>. Se domani la regola cambia, non cambia nessun client.
+    </p>
+    <div class="where"><span class="hud">Nel codice</span>
+      <code>server/protocol.py</code> <code>server/scene.py</code> <code>spec/protocol.md</code>
+    </div>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">13</div>
+    <div>
+      <h2>I numeri, in un posto solo</h2>
+      <p>Nessuno di questi è inventato: o è misurato con un comando riproducibile, o è citato al file upstream
+         che lo definisce. Nel codice non ci sono valori letterali.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <div class="tablewrap">
+      <table>
+        <caption>Le costanti che contano</caption>
+        <thead><tr><th>Costante</th><th>Valore</th><th>Da dove viene</th></tr></thead>
+        <tbody>
+          <tr><td><code>TICK_HZ</code></td><td class="num">50 Hz</td><td>il ritmo della politica upstream</td></tr>
+          <tr><td><code>GENERATOR_HZ</code></td><td class="num">30 Hz</td><td>configurazione di MotionBricks</td></tr>
+          <tr><td>Passo della fisica</td><td class="num">1 ms</td><td>il più fine che tiene il doppio del tempo reale</td></tr>
+          <tr><td><code>MAX_OUTSTANDING_COMMITS</code></td><td class="num">5</td><td>scelta di design del proprietario del progetto</td></tr>
+          <tr><td><code>COMMIT_HORIZON_TICKS</code></td><td class="num">30 (0,60 s)</td><td>design — attualmente inerte, vedi §11</td></tr>
+          <tr><td><code>POSE_DWELL_TICKS</code></td><td class="num">74 (1,48 s)</td><td>misurato: la posa più lenta della libreria</td></tr>
+          <tr><td><code>ARRIVAL_RADIUS_M</code></td><td class="num">0,40 m</td><td>misurato su dieci placement</td></tr>
+          <tr><td><code>APPROACH_SPEED_M_S</code></td><td class="num">0,83 m/s</td><td>misurato: camminata sostenuta</td></tr>
+          <tr><td>Timeout dell'approccio</td><td class="num">8,4 s</td><td>derivato: la diagonale del ring a quella velocità</td></tr>
+          <tr><td><code>RING_SIZE_M</code></td><td class="num">4,90 m</td><td>dimensione da competizione</td></tr>
+          <tr><td>Giunti / <code>qpos</code></td><td class="num">29 / 36</td><td>3 posizione + 4 quaternione + 29 giunti</td></tr>
+          <tr><td>Ingresso encoder → token</td><td class="num">1762 → 64</td><td>di cui 644 informativi in questa modalità</td></tr>
+          <tr><td>Ingresso decoder → azioni</td><td class="num">994 → 29</td><td>64 token + 930 di storia</td></tr>
+          <tr><td>Durata tipica di un commit</td><td class="num">3–5 s</td><td>misurato in partite fra agenti</td></tr>
+          <tr><td>Costo per tick, live</td><td class="num">7,7 ms / 20 ms</td><td>due client collegati, impacchettare un frame costa 0,02 ms</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="where"><span class="hud">Nel codice</span>
+      <code>spec/constants.py</code> <code>spec/rates.md</code>
+    </div>
+  </div></div>
+</section>
+
+<section>
+  <div class="sec-head">
+    <div class="sec-num">14</div>
+    <div>
+      <h2>Le regole che tengono in piedi tutto questo</h2>
+      <p>Sette invarianti. Violarne uno non è una scorciatoia: è una regressione di progetto. Se vuoi
+         contribuire, questa è la parte da leggere due volte.</p>
+    </div>
+  </div>
+  <div class="body"><div></div><div class="col">
+    <ol>
+      <li><strong>Un processo per match.</strong> Fisica, un generatore per fighter, una politica condivisa.
+          Niente DDS, niente stack di deploy C++, niente fisica tra processi.</li>
+      <li><strong>Il server ha ragione.</strong> I client mandano intenti e ricevono stato. Mai fisica o
+          generazione lato client, nemmeno "solo per predire".</li>
+      <li><strong>Il codice upstream è di sola lettura</strong>, senza eccezioni: arriva come sottomodulo
+          <code>external/gr00t-wbc</code> e non lo si modifica mai. L'unico comportamento che aggiungiamo — il
+          punto di innesto della posa autorata — è installato <em>a runtime</em> sull'istanza dell'agente. Se
+          servisse un cambiamento non installabile a runtime, ci si ferma e si chiede.</li>
+      <li><strong>Ogni mappatura di indici si deriva per nome</strong> e si asserisce invertibile alla
+          costruzione. È la singola fonte più probabile di un bug catastrofico e silenzioso.</li>
+      <li><strong>Fallire ad alta voce.</strong> Nessun ripiego silenzioso, nessun <code>except: pass</code>,
+          nessun clamp che nasconde un ingresso sbagliato.</li>
+      <li><strong>Il determinismo si registra, non si presume.</strong> Ogni match scrive semi, versioni e la
+          traccia di stato. La ri-simulazione bit-esatta non è promessa.</li>
+      <li><strong>Prima la specifica.</strong> Tutto ciò che attraversa un confine — intento, pose record,
+          loadout, referto, protocollo, API degli agenti — è uno schema versionato prima di essere codice.</li>
+    </ol>
+    <p>
+      C'è anche una disciplina sui nomi, e conviene rispettarla fin dal primo commit: il generatore è
+      <strong>MotionBricks</strong> (non GR00T N1.5, che è un altro modello NVIDIA), la politica è
+      <strong>GEAR-SONIC</strong>, e le cose nostre sono <em>openroboxing</em>, lo <em>Studio</em>, il
+      <em>ring client</em>, il <em>sito della lega</em>.
+    </p>
+  </div></div>
+</section>
+
+<div class="closing">
+  <div class="sec-num" style="color:var(--text-muted)">FINE</div>
+  <div>
+    <p class="kicker kicker--muted">Da qui in poi</p>
+    <p style="margin-top:12px">
+      Le tre porte d'ingresso più naturali per chi arriva ora sono: <strong>lo Studio</strong>, dove si autorano
+      e si misurano nuove pose (la libreria delle pose <em>è</em> il moveset del gioco); il <strong>client</strong>,
+      che è HTML e JavaScript senza build step; e la <strong>lega</strong>, che ha già punteggio, Glicko-2,
+      accoppiamenti svizzeri e una stagione congelabile per hash. Il runtime del match, quello descritto qui,
+      è la parte in cui conviene entrare solo dopo aver letto gli invarianti — e con una misura in mano.
+    </p>
+  </div>
+</div>
+
+</div>

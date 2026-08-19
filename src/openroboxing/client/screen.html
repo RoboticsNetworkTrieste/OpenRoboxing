@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRoboxing — fight night</title>
+<link rel="icon" href="/static/assets/torc-icon-dark.svg">
+<link rel="stylesheet" href="/static/tokens/colors.css">
+<link rel="stylesheet" href="/static/tokens/typography.css">
+<link rel="stylesheet" href="/static/tokens/spacing.css">
+<link rel="stylesheet" href="/static/tokens/shape.css">
+<link rel="stylesheet" href="/static/tokens/elevation.css">
+<link rel="stylesheet" href="/static/tokens/motion.css">
+<link rel="stylesheet" href="/static/tokens/semantic.css">
+<link rel="stylesheet" href="/static/tokens/base.css">
+<link rel="stylesheet" href="/static/tokens/backgrounds.css">
+<link rel="stylesheet" href="/static/screen.css">
+</head>
+<body class="torc-field" data-field="scan" data-field-glow="lit" data-field-depth="deep" data-instrument="quiet">
+
+<!-- M5-T3: the projector view. Its acceptance is "driven live at a meetup without an operator
+     touching a terminal", so it takes no input at all: it connects as a spectator, reconnects by
+     itself when a match ends and the next one starts, and never shows a control. -->
+
+<div class="scoreline">
+  <div class="corner red">
+    <span class="block"></span>
+    <div>
+      <span class="corner-label">red corner</span>
+      <span class="name" id="name-red">red</span>
+    </div>
+    <div class="tally">
+      <span class="count" id="tally-red">0</span>
+      <span class="torc-hud-label">hits</span>
+    </div>
+  </div>
+
+  <div class="middle">
+    <span class="clock" id="clock">--:--</span>
+    <span class="live-pill">
+      <span class="live-dot"></span>
+      <span class="live-label" id="round">round – of –</span>
+    </span>
+  </div>
+
+  <div class="corner blue">
+    <div class="tally">
+      <span class="count" id="tally-blue">0</span>
+      <span class="torc-hud-label">hits</span>
+    </div>
+    <div class="right">
+      <span class="corner-label">blue corner</span>
+      <span class="name" id="name-blue">blue</span>
+    </div>
+    <span class="block"></span>
+  </div>
+</div>
+
+<!-- The official scorer's own number over the round so far, marked provisional until the bell. A
+     projector that quietly changed its mind at the end would look like the game cheated. -->
+<div class="scorebar">
+  <div class="scorebar-head">
+    <span class="share red" id="share-red">—</span>
+    <span class="chip chip-warn">provisional · round in progress</span>
+    <span class="share blue" id="share-blue">—</span>
+  </div>
+  <div class="bar">
+    <span class="fill-red" id="share-fill-red"></span>
+    <span class="fill-blue" id="share-fill-blue"></span>
+  </div>
+  <div class="scorebar-foot">
+    <span class="torc-hud-label" id="totals">rounds 0 — 0 · points 0 — 0</span>
+    <span class="torc-hud-label">damage · ring control · aggression</span>
+  </div>
+</div>
+
+<div class="body">
+  <section class="card arena torc-hud">
+    <div class="plate-label">
+      <span class="torc-hud-label accent">fig. 02</span>
+      <span class="torc-hud-label" id="arena-note">arena · unitree g1</span>
+    </div>
+    <div class="canvas-wrap">
+      <!-- 16:9, fitted by height and centred, so the plate letterboxes rather than stretching the
+           camera into a letterbox of its own. -->
+      <div class="canvas-box">
+        <canvas id="ring"></canvas>
+        <svg class="arena-overlay" id="arena-overlay" aria-hidden="true"></svg>
+        <div id="banner" class="banner hidden"></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="side">
+    <section class="card feed-card">
+      <span class="torc-kicker">live feed</span>
+      <ul class="feed" id="feed"></ul>
+    </section>
+
+    <!-- Served by the league, which may not be running. A screen with no table is still a screen;
+         a screen that breaks because the league is down is not. -->
+    <section class="card table-card hidden" id="table-card">
+      <div class="plate-label">
+        <span class="torc-kicker">season table</span>
+        <span class="torc-hud-label push">polled every 30 s</span>
+      </div>
+      <div class="table" id="table">
+        <span class="th">handle</span>
+        <span class="th right">rating</span>
+        <span class="th right">rd</span>
+        <span class="th right">w-d-l</span>
+      </div>
+    </section>
+  </aside>
+</div>
+
+<footer class="ticker">
+  <span class="connected" id="status"><span class="live-dot"></span>connecting</span>
+  <span class="v-divider"></span>
+  <span class="venue" id="venue">OpenRoboxing · fight night</span>
+  <img class="wordmark" src="/static/assets/torc-wordmark-dark.svg" alt="TORC">
+</footer>
+
+<script type="module" src="/static/screen.js"></script>
+</body>
+</html>

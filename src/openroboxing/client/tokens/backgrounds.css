@@ -1,0 +1,70 @@
+/* ── Grounds: layered technical fields ──────────────────────────
+   A ground is never a single flat fill. `.torc-field` composes four
+   layers, in paint order: scrim → wash → art → grain → base colour.
+   Each layer is ONE background-image, driven by one custom property,
+   so the four lists below always stay aligned.
+
+   Variants are data attributes, not classes, so every declaration
+   of a --field-* property lives in a [data-*] scope:
+     data-field="survey|contour|schematic|scan|strata"   the drawn field
+     data-field-glow="lit|wash"                          directional wash
+     data-field-depth="open|deep|hero"                   how hard the scrim bites
+     data-field-edge="horizon"                           hairline of light on a band join
+
+   Every field exists on BOTH grounds. On ink the art is drawn in light
+   strokes and the veil darkens toward the edges; on paper (set
+   data-theme="light") the art is drawn in forest ink and the veil
+   LIGHTENS toward the edges, so the ground still recedes. */
+:root{
+  --field-art:none; /* @kind other */
+  --field-glow:none; /* @kind other */
+  --field-art-size:cover; /* @kind other */
+  --field-art-pos:center; /* @kind other */
+  --field-art-repeat:no-repeat; /* @kind other */
+  --field-grain:url('../assets/backgrounds/torc-bg-grain.svg'); /* @kind other */
+  --field-veil:radial-gradient(120% 100% at 50% 38%,rgba(8,19,15,0) 0%,rgba(8,19,15,.22) 58%,rgba(5,13,10,.62) 100%); /* @kind other */
+}
+.torc-field{
+  background-color:var(--bg-page);
+  background-image:var(--field-veil),var(--field-glow),var(--field-art),var(--field-grain);
+  background-repeat:no-repeat,no-repeat,var(--field-art-repeat),repeat;
+  background-position:center,center,var(--field-art-pos),0 0;
+  background-size:cover,cover,var(--field-art-size),160px 160px;
+}
+/* Art — the drawn field */
+[data-field="survey"]{--field-art:url('../assets/backgrounds/torc-bg-survey.svg'); /* @kind other */--field-art-size:240px 240px; /* @kind other */--field-art-repeat:repeat; /* @kind other */}
+[data-field="contour"]{--field-art:url('../assets/backgrounds/torc-bg-contour.svg'); /* @kind other */}
+[data-field="schematic"]{--field-art:url('../assets/backgrounds/torc-bg-schematic.svg'); /* @kind other */}
+[data-field="scan"]{--field-art:url('../assets/backgrounds/torc-bg-scan.svg'); /* @kind other */}
+[data-field="strata"]{--field-art:url('../assets/backgrounds/torc-bg-strata.svg'); /* @kind other */--field-art-size:100% auto; /* @kind other */--field-art-pos:center bottom; /* @kind other */}
+/* Glow — a single directional wash. Never a halo around an element. */
+[data-field-glow="lit"]{--field-glow:radial-gradient(72% 58% at 10% 106%,var(--torc-alpha-accent-12) 0%,transparent 72%); /* @kind other */}
+[data-field-glow="wash"]{--field-glow:radial-gradient(92% 72% at 80% -12%,rgba(234,242,237,.055) 0%,transparent 66%); /* @kind other */}
+/* Depth — how hard the scrim bites. Default sits between open and deep.
+   hero runs the scrim bottom-up, for titles set low on the surface. */
+[data-field-depth="open"]{--field-veil:radial-gradient(140% 115% at 50% 40%,rgba(8,19,15,0) 0%,rgba(5,13,10,.34) 100%); /* @kind other */}
+[data-field-depth="deep"]{--field-veil:radial-gradient(112% 92% at 50% 42%,rgba(8,19,15,.34) 0%,rgba(5,13,10,.86) 100%); /* @kind other */}
+[data-field-depth="hero"]{--field-veil:linear-gradient(to top,rgba(5,13,10,.90) 0%,rgba(8,19,15,.42) 46%,rgba(8,19,15,.06) 100%); /* @kind other */}
+/* Edge — one hairline of light where a band begins */
+[data-field-edge="horizon"]{box-shadow:inset 0 1px 0 var(--torc-alpha-line)}
+
+/* ── The same grounds on paper ──────────────────────────────────
+   Forest-ink art, a veil of paper instead of ink, and a clay-warm
+   wash instead of a mist one. Same attribute vocabulary throughout. */
+[data-theme="light"]{
+  --field-grain:url('../assets/backgrounds/torc-bg-grain-paper.svg'); /* @kind other */
+  --field-veil:radial-gradient(120% 100% at 50% 38%,rgba(239,237,230,0) 0%,rgba(239,237,230,.42) 58%,rgba(248,247,243,.86) 100%); /* @kind other */
+}
+[data-theme="light"] [data-field="survey"],[data-theme="light"][data-field="survey"]{--field-art:url('../assets/backgrounds/torc-bg-survey-paper.svg'); /* @kind other */}
+[data-theme="light"] [data-field="contour"],[data-theme="light"][data-field="contour"]{--field-art:url('../assets/backgrounds/torc-bg-contour-paper.svg'); /* @kind other */}
+[data-theme="light"] [data-field="schematic"],[data-theme="light"][data-field="schematic"]{--field-art:url('../assets/backgrounds/torc-bg-schematic-paper.svg'); /* @kind other */}
+[data-theme="light"] [data-field="scan"],[data-theme="light"][data-field="scan"]{--field-art:url('../assets/backgrounds/torc-bg-scan-paper.svg'); /* @kind other */}
+[data-theme="light"] [data-field="strata"],[data-theme="light"][data-field="strata"]{--field-art:url('../assets/backgrounds/torc-bg-strata-paper.svg'); /* @kind other */}
+[data-theme="light"] [data-field-glow="lit"],[data-theme="light"][data-field-glow="lit"]{--field-glow:radial-gradient(72% 58% at 10% 106%,var(--torc-alpha-accent-12) 0%,transparent 72%); /* @kind other */}
+[data-theme="light"] [data-field-glow="wash"],[data-theme="light"][data-field-glow="wash"]{--field-glow:radial-gradient(92% 72% at 80% -12%,var(--torc-alpha-clay-12) 0%,transparent 66%); /* @kind other */}
+[data-theme="light"] [data-field-depth="open"],[data-theme="light"][data-field-depth="open"]{--field-veil:radial-gradient(140% 115% at 50% 40%,rgba(239,237,230,0) 0%,rgba(248,247,243,.62) 100%); /* @kind other */}
+[data-theme="light"] [data-field-depth="deep"],[data-theme="light"][data-field-depth="deep"]{--field-veil:radial-gradient(112% 92% at 50% 42%,rgba(229,226,217,.50) 0%,rgba(214,210,198,.92) 100%); /* @kind other */}
+[data-theme="light"] [data-field-depth="hero"],[data-theme="light"][data-field-depth="hero"]{--field-veil:linear-gradient(to top,rgba(248,247,243,.96) 0%,rgba(239,237,230,.55) 46%,rgba(239,237,230,.10) 100%); /* @kind other */}
+[data-theme="light"] [data-field-edge="horizon"],[data-theme="light"][data-field-edge="horizon"]{box-shadow:inset 0 1px 0 var(--torc-alpha-line-paper)}
+/* Instrument density reaches the grounds too: off means no drawn field at all. */
+[data-instrument="off"]{--field-art:none; /* @kind other */}

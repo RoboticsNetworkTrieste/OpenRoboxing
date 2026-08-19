@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice">
+  <!-- Stand-in for the delivered TORC `scan` field: lidar range rings sweeping from the lower left,
+       cut by two bearing lines. Drawn at the projector's own 16:9 so it scales with `cover`. -->
+  <g fill="none" stroke="rgba(234,242,237,.05)" stroke-width="1.5">
+    <circle cx="200" cy="1010" r="280"/>
+    <circle cx="200" cy="1010" r="470"/>
+    <circle cx="200" cy="1010" r="680"/>
+    <circle cx="200" cy="1010" r="910"/>
+    <circle cx="200" cy="1010" r="1160"/>
+    <circle cx="200" cy="1010" r="1430"/>
+  </g>
+  <g fill="none" stroke="rgba(234,242,237,.035)" stroke-width="1">
+    <path d="M200 1010 L1780 1010M200 1010 L1560 190M200 1010 L840 -120M200 1010 L1860 640"/>
+  </g>
+</svg>

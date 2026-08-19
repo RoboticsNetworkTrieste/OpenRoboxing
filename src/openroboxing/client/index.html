@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRoboxing</title>
+<!-- The TORC token sheets, copied verbatim from spec/ui-design-guide/tokens/. Design against the
+     semantic aliases, never the raw ramp — semantic.css is the sheet that matters. -->
+<link rel="icon" href="/static/assets/torc-icon-dark.svg">
+<link rel="stylesheet" href="/static/tokens/colors.css">
+<link rel="stylesheet" href="/static/tokens/typography.css">
+<link rel="stylesheet" href="/static/tokens/spacing.css">
+<link rel="stylesheet" href="/static/tokens/shape.css">
+<link rel="stylesheet" href="/static/tokens/elevation.css">
+<link rel="stylesheet" href="/static/tokens/motion.css">
+<link rel="stylesheet" href="/static/tokens/semantic.css">
+<link rel="stylesheet" href="/static/tokens/base.css">
+<link rel="stylesheet" href="/static/tokens/backgrounds.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="torc-field" data-field="survey" data-field-depth="open" data-instrument="quiet">
+
+<header class="topbar">
+  <span class="brand">OpenRoboxing</span>
+  <span class="v-divider"></span>
+  <div class="clock-group">
+    <span class="clock" id="clock">--:--</span>
+    <span class="round" id="round">round – / –</span>
+  </div>
+  <div class="live-pill" id="live-pill">
+    <span class="live-dot"></span>
+    <span class="live-label">live</span>
+  </div>
+  <span class="torc-hud-label ping" id="ping">ping — ms</span>
+</header>
+
+<div class="top-grid">
+
+  <!-- ── The arena. The three.js canvas is inherited, not redesigned: the host streams body
+       transforms and this browser draws the G1 meshes (spec/protocol.md 0.4). Everything the
+       overlay adds on top — the walk path, the anchor, the contact ring — is drawn in SVG from
+       projected world coordinates, so it can never disagree with what the renderer drew. -->
+  <section class="card arena torc-hud">
+    <div class="plate-label">
+      <span class="torc-hud-label accent">fig. 01</span>
+      <span class="torc-hud-label">arena · three.js · unitree g1 · fixed camera · 16:9</span>
+      <span class="torc-hud-label push">30 fps</span>
+    </div>
+    <div class="canvas-wrap">
+      <!-- 16:9, fitted by height and centred. The label above says 16:9 and it has to be true: the
+           overlay projects through the renderer's camera, and a box that lied about its shape would
+           put the anchor somewhere the fighter is not. -->
+      <div class="canvas-box">
+        <canvas id="ring"></canvas>
+        <svg class="arena-overlay" id="arena-overlay" aria-hidden="true"></svg>
+        <div class="banner hidden" id="banner"></div>
+      </div>
+    </div>
+    <div class="legend">
+      <span class="torc-hud-label legend-item"><span class="sw sw-dot-red"></span>live position · G1 mesh</span>
+      <span class="torc-hud-label legend-item"><span class="sw sw-anchor"></span>anchor — where the queue leaves you</span>
+      <span class="torc-hud-label legend-item"><span class="sw sw-ghost"></span>your ghost — local, 60 fps</span>
+    </div>
+  </section>
+
+  <div class="rail">
+    <!-- The placement map exists because the camera is fixed and perspective hides depth. -->
+    <section class="card map-card">
+      <div class="plate-label">
+        <span class="torc-hud-label">placement map · top view</span>
+        <span class="torc-hud-label push" id="map-size">4.90 m</span>
+      </div>
+      <svg class="map" id="map" viewBox="-24 -24 538 538" aria-label="Top-down placement map">
+        <defs>
+          <pattern id="mmgrid" width="49" height="49" patternUnits="userSpaceOnUse">
+            <path d="M49 0V49H0" fill="none" stroke="var(--border-grid)" stroke-width="1.5"></path>
+          </pattern>
+          <marker id="mmarrow" markerWidth="7" markerHeight="7" refX="5.5" refY="3" orient="auto">
+            <path d="M0 0 6 3 0 6z" fill="var(--accent)"></path>
+          </marker>
+        </defs>
+        <rect id="map-grid" x="0" y="0" width="490" height="490" fill="url(#mmgrid)"></rect>
+        <rect id="map-bounds" x="0" y="0" width="490" height="490" fill="none" stroke="var(--border-strong)" stroke-width="2.5"></rect>
+        <g id="map-live"></g>
+      </svg>
+      <p class="caption">Where the ghost stands, read from above — the one thing the fixed camera hides.</p>
+    </section>
+
+    <!-- Range is not secret: both fighters can see how far apart they are by looking. -->
+    <section class="card">
+      <span class="torc-hud-label">separation · public</span>
+      <div class="sep-head">
+        <span class="sep-band" id="sep-band">—</span>
+        <span class="sep-metres" id="sep-metres">— m</span>
+      </div>
+      <div class="sep-strip" id="sep-strip">
+        <span data-band="close"></span><span data-band="near"></span>
+        <span data-band="out"></span><span data-band="miles"></span>
+      </div>
+      <div class="sep-legend">
+        <span class="torc-hud-label" data-band="close">in range</span>
+        <span class="torc-hud-label" data-band="near">closing</span>
+        <span class="torc-hud-label" data-band="out">out</span>
+        <span class="torc-hud-label" data-band="miles">miles</span>
+      </div>
+    </section>
+  </div>
+
+  <div class="rail">
+    <!-- spec/scoring.md's own weighted number over the round so far — not a second scoreboard.
+         The `provisional` chip is not optional: it can never be allowed to read as final. -->
+    <section class="card score">
+      <div class="plate-label">
+        <span class="torc-kicker">score</span>
+        <span class="chip chip-warn push">provisional</span>
+      </div>
+      <div class="share-row">
+        <span class="share red" id="share-red">—</span>
+        <span class="torc-hud-label" id="leading">leading · —</span>
+        <span class="share blue" id="share-blue">—</span>
+      </div>
+      <div class="bar share-bar">
+        <span class="fill-red" id="share-fill-red"></span>
+        <span class="fill-blue" id="share-fill-blue"></span>
+      </div>
+      <p class="caption" id="score-caption">The scorer's own weighted share of the round so far. It
+        swings early and settles late.</p>
+      <div class="hairline"></div>
+      <div class="dims">
+        <div class="dim">
+          <div class="dim-label">damage</div>
+          <div class="bar dim-bar"><span class="fill-red" data-dim="damage" data-seat="red"></span><span class="fill-blue" data-dim="damage" data-seat="blue"></span></div>
+        </div>
+        <div class="dim">
+          <div class="dim-label">ring control</div>
+          <div class="bar dim-bar"><span class="fill-red" data-dim="control" data-seat="red"></span><span class="fill-blue" data-dim="control" data-seat="blue"></span></div>
+        </div>
+        <div class="dim">
+          <div class="dim-label">aggression</div>
+          <div class="bar dim-bar"><span class="fill-red" data-dim="aggression" data-seat="red"></span><span class="fill-blue" data-dim="aggression" data-seat="blue"></span></div>
+        </div>
+      </div>
+      <div class="hairline"></div>
+      <div class="totals">
+        <span class="torc-hud-label" id="rounds-won">rounds 0 — 0</span>
+        <span class="torc-hud-label push" id="points">points 0 — 0</span>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- Two seats in one page: M4-T1's acceptance is two people on one machine. Each seat opens its own
+     socket, so the host cannot tell hotseat from two browsers and does not need to. -->
+<div class="seats">
+  <section class="seat" id="seat-red" data-seat="red">
+    <div class="seat-head">
+      <span class="seat-square"></span>
+      <span class="seat-corner">red corner</span>
+      <span class="handle" id="handle-red">red</span>
+      <span class="landed"><b id="landed-red">0</b><span class="torc-hud-label">hits landed</span></span>
+      <span class="keys push">
+        <span class="key-chip key-commit" id="commit-chip-red">SPACE</span>
+        <span class="key-note" id="commit-note-red">commit</span>
+        <span class="key-chip">W A S D</span>
+        <span class="key-note dim">drive ghost</span>
+        <span class="key-chip">Q</span>
+        <span class="key-note dim">unstage</span>
+      </span>
+    </div>
+    <div class="seat-grid">
+      <div class="loadout-col">
+        <div class="col-head">
+          <span class="torc-hud-label">loadout · 6 slots</span>
+          <span class="torc-hud-label push" id="loadout-note-red">1 — 6</span>
+        </div>
+        <div class="loadout" id="loadout-red"></div>
+      </div>
+
+      <!-- The most important block on the page: what this commit costs in time you cannot take
+           back. Recomputed locally at 60 fps as the ghost moves. -->
+      <div class="cost" id="cost-red">
+        <span class="cost-label">cost of this commit</span>
+        <div class="cost-figure">
+          <span class="cost-value" id="cost-value-red">—</span>
+          <span class="cost-sub" id="cost-sub-red">nothing<br>staged</span>
+        </div>
+        <div class="bar cost-bar" id="cost-bar-red" hidden>
+          <span class="fill-walk" id="cost-walk-red"></span>
+          <span class="fill-throw" id="cost-throw-red"></span>
+        </div>
+        <div class="cost-split" id="cost-split-red" hidden>
+          <span id="cost-walk-text-red">— s walk</span><span id="cost-throw-text-red">— s throw</span>
+        </div>
+        <div class="alert alert-danger" id="error-red" hidden></div>
+      </div>
+
+      <div class="queue-col">
+        <div class="col-head">
+          <span class="torc-hud-label" id="queue-head-red">queue · 0 of 5 · no cancellation</span>
+          <span class="torc-hud-label push" id="queue-left-red">5 left</span>
+        </div>
+        <div class="queue" id="queue-red"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="seat" id="seat-blue" data-seat="blue">
+    <div class="seat-head">
+      <span class="seat-square"></span>
+      <span class="seat-corner">blue corner</span>
+      <span class="handle" id="handle-blue">blue</span>
+      <span class="landed"><b id="landed-blue">0</b><span class="torc-hud-label">hits landed</span></span>
+      <span class="keys push">
+        <span class="key-chip key-commit" id="commit-chip-blue">ENTER</span>
+        <span class="key-note" id="commit-note-blue">commit</span>
+        <span class="key-chip">↑ ↓ ← →</span>
+        <span class="key-note dim">drive ghost</span>
+        <span class="key-chip">P</span>
+        <span class="key-note dim">unstage</span>
+      </span>
+    </div>
+    <div class="seat-grid">
+      <div class="loadout-col">
+        <div class="col-head">
+          <span class="torc-hud-label">loadout · 6 slots</span>
+          <span class="torc-hud-label push" id="loadout-note-blue">U I O J K L</span>
+        </div>
+        <div class="loadout" id="loadout-blue"></div>
+      </div>
+
+      <div class="cost" id="cost-blue">
+        <span class="cost-label">cost of this commit</span>
+        <div class="cost-figure">
+          <span class="cost-value" id="cost-value-blue">—</span>
+          <span class="cost-sub" id="cost-sub-blue">nothing<br>staged</span>
+        </div>
+        <div class="bar cost-bar" id="cost-bar-blue" hidden>
+          <span class="fill-walk" id="cost-walk-blue"></span>
+          <span class="fill-throw" id="cost-throw-blue"></span>
+        </div>
+        <div class="cost-split" id="cost-split-blue" hidden>
+          <span id="cost-walk-text-blue">— s walk</span><span id="cost-throw-text-blue">— s throw</span>
+        </div>
+        <div class="alert alert-danger" id="error-blue" hidden></div>
+      </div>
+
+      <div class="queue-col">
+        <div class="col-head">
+          <span class="torc-hud-label" id="queue-head-blue">queue · 0 of 5 · no cancellation</span>
+          <span class="torc-hud-label push" id="queue-left-blue">5 left</span>
+        </div>
+        <div class="queue" id="queue-blue"></div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- A first-time player at a meetup gets no tutorial. This line is the tutorial. -->
+<div class="teach">
+  <span class="torc-kicker">first fight</span>
+  <p>Pick the pose your move ends in, drive your ghost to the spot in the ring where it should
+    happen, then commit — your fighter walks there and arrives in that pose, and the walk is time you
+    cannot take back.</p>
+  <span class="torc-hud-label push" id="status">connecting&hellip;</span>
+</div>
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

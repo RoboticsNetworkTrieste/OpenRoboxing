@@ -1,0 +1,47 @@
+/* ── Type ───────────────────────────────────────────────────────
+   Red Hat Display — the logo typeface. Brand moments + all headings.
+   Red Hat Text    — body and UI. Same skeleton, tuned for small sizes.
+   Red Hat Mono    — labels, kickers, metadata, code. The "telemetry" voice.
+   One family, three cuts: the whole system is Red Hat. */
+:root{
+  --font-display:'Red Hat Display','Red Hat Text',system-ui,sans-serif;
+  --font-sans:'Red Hat Text','Red Hat Display',system-ui,sans-serif;
+  --font-mono:'Red Hat Mono',ui-monospace,'SF Mono',Menlo,monospace;
+
+  --fw-regular:400; /* @kind other */
+  --fw-medium:500; /* @kind other */
+  --fw-semibold:600; /* @kind other */
+  --fw-bold:700; /* @kind other */
+
+  /* Scale — 1.25 major-third-ish, rounded to whole px */
+  --text-4xs:10px;  /* HUD annotation only */
+  --text-3xs:11px;
+  --text-2xs:12px;
+  --text-xs:13px;
+  --text-sm:15px;
+  --text-md:17px;   /* body default */
+  --text-lg:20px;
+  --text-xl:24px;
+  --text-2xl:30px;
+  --text-3xl:38px;
+  --text-4xl:48px;
+  --text-5xl:62px;
+  --text-6xl:80px;
+  --text-7xl:104px; /* hero / slide titles only */
+
+  --lh-tight:1.02; /* @kind other */   /* display 4xl+ */
+  --lh-snug:1.14; /* @kind other */    /* headings */
+  --lh-normal:1.35; /* @kind other */  /* subheads, UI */
+  --lh-relaxed:1.62; /* @kind other */ /* body copy */
+
+  --ls-display:-0.035em; /* set headlines tight — machined, not airy */
+  --ls-heading:-0.02em;
+  --ls-normal:-0.005em;
+  --ls-mono:0.04em;
+  --ls-kicker:0.18em;    /* uppercase mono eyebrow */
+  --ls-hud:0.22em;       /* smallest annotation labels */
+
+  --measure-tight:34ch;
+  --measure:66ch;   /* body paragraph max */
+  --measure-wide:78ch;
+}

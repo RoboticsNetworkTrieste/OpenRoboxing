@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRoboxing — Pose Studio</title>
+<link rel="icon" href="/static/assets/torc-icon-dark.svg">
+<link rel="stylesheet" href="/static/tokens/colors.css">
+<link rel="stylesheet" href="/static/tokens/typography.css">
+<link rel="stylesheet" href="/static/tokens/spacing.css">
+<link rel="stylesheet" href="/static/tokens/shape.css">
+<link rel="stylesheet" href="/static/tokens/elevation.css">
+<link rel="stylesheet" href="/static/tokens/motion.css">
+<link rel="stylesheet" href="/static/tokens/semantic.css">
+<link rel="stylesheet" href="/static/tokens/base.css">
+<link rel="stylesheet" href="/static/tokens/backgrounds.css">
+<link rel="stylesheet" href="/static/studio.css">
+</head>
+<body class="torc-field" data-field="schematic" data-field-depth="open" data-instrument="quiet">
+
+<!-- S-T1. Every rule lives on the server — joint limits come from the model, validation from
+     studio/pose_record.py. This page draws sliders and shows what came back. That is deliberate: a
+     browser that decided for itself what a legal pose was would drift from what a match accepts. -->
+
+<header class="topbar">
+  <span class="brand">Pose Studio</span>
+  <span class="v-divider"></span>
+  <input id="name" class="pose-name" value="untitled" spellcheck="false" aria-label="pose name">
+  <span class="chip chip-secondary hidden" id="unsaved">unsaved</span>
+  <span class="torc-hud-label push" id="joint-count">— joints</span>
+  <span class="torc-hud-label" id="origin">localhost</span>
+</header>
+
+<div class="body">
+
+  <section class="rail joints">
+    <div class="rail-head">
+      <span class="torc-kicker">joints</span>
+      <span class="torc-hud-label push">rad · from /api/joints</span>
+    </div>
+    <div id="groups"></div>
+  </section>
+
+  <section class="preview">
+    <div class="rail-head">
+      <span class="torc-kicker">preview</span>
+      <span class="torc-hud-label push">/api/render · png · redraws on drag</span>
+    </div>
+    <!-- The plate renders explicitly empty until the server sends a PNG. An empty plate that says
+         so is the correct placeholder; a blank rectangle is not. -->
+    <figure class="plate torc-hud" id="plate">
+      <span class="plate-index torc-hud-label">fig. 03</span>
+      <img id="view" alt="rendered pose">
+      <span class="plate-empty" id="plate-empty">no render yet</span>
+      <figcaption class="torc-hud-label" id="plate-caption">/api/render · 640 × 640</figcaption>
+    </figure>
+    <div class="rail-head">
+      <span class="torc-hud-label" id="frame-note">fig. 03</span>
+      <span class="torc-hud-label push">camera · fixed · 3/4 front</span>
+    </div>
+  </section>
+
+  <section class="rail right">
+    <div>
+      <div class="rail-head">
+        <span class="torc-kicker">horizon</span>
+        <span class="torc-hud-label push">6 → 16 tokens</span>
+      </div>
+      <div class="horizon-figure">
+        <span class="horizon-value" id="horizon-value">8</span>
+        <span class="torc-hud-label">tokens</span>
+        <span class="horizon-seconds push" id="horizon-seconds">1.07 s</span>
+      </div>
+      <div class="horizon-strip" id="horizon-strip"></div>
+      <span class="footnote">tokens × 4 / 30 = seconds</span>
+    </div>
+
+    <div class="hairline"></div>
+
+    <div>
+      <div class="rail-head">
+        <span class="torc-kicker">hand reach</span>
+        <span class="torc-hud-label push">/api/reach</span>
+      </div>
+      <div class="reach-row"><span class="torc-hud-label">left</span><span id="reach-left">—</span></div>
+      <div class="reach-row"><span class="torc-hud-label">right</span><span id="reach-right">—</span></div>
+    </div>
+
+    <div class="hairline"></div>
+
+    <div>
+      <span class="torc-kicker">status</span>
+      <!-- The server's own sentence, verbatim. This page never writes a rule of its own. -->
+      <div class="alert" id="status" data-tone="info">loading joints from the robot model&hellip;</div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-secondary" id="check">Check</button>
+      <button class="btn btn-primary" id="save" disabled>Save pose</button>
+      <button class="btn btn-ghost" id="reset">Reset</button>
+      <span class="footnote centre">save is blocked until check passes</span>
+      <!-- Saving is not admitting. A match refuses a draft (Loadout.validate), and admission needs a
+           measured generator_error_rad — spec/pose_record.md. The page says so where the button is,
+           not somewhere an author would have to go looking. -->
+      <span class="footnote centre">a save writes a <b>draft</b> · a match refuses drafts until admission</span>
+    </div>
+  </section>
+</div>
+
+<script type="module" src="/static/studio.js"></script>
+</body>
+</html>

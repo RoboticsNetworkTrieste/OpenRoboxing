@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="520" viewBox="0 0 1920 520" preserveAspectRatio="none">
+  <!-- Stand-in for the delivered TORC `strata` field: sediment bands stacked at the bottom edge.
+       tokens/backgrounds.css sizes this `100% auto` and pins it `center bottom`. -->
+  <g fill="none" stroke="rgba(234,242,237,.05)" stroke-width="1.5">
+    <path d="M0 500C260 470 520 492 780 476S1320 448 1620 470 1920 460 1920 460"/>
+    <path d="M0 430C300 404 540 428 820 410S1380 386 1660 404 1920 396 1920 396"/>
+    <path d="M0 352C280 330 560 350 840 334S1400 312 1680 328 1920 322 1920 322"/>
+    <path d="M0 268C320 248 580 266 860 252S1420 232 1700 246 1920 240 1920 240"/>
+    <path d="M0 176C300 160 560 174 900 162S1440 146 1720 158 1920 152 1920 152"/>
+    <path d="M0 88C340 76 620 88 940 78S1480 66 1760 74 1920 70 1920 70"/>
+  </g>
+</svg>

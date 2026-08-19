@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="240" height="240" viewBox="0 0 240 240">
+  <!-- Stand-in for the delivered TORC `survey` field: a blueprint plate — fine grid, a heavier
+       48 px rule, and measurement crosses. Repeats at 240 x 240, as tokens/backgrounds.css sets. -->
+  <g stroke="rgba(234,242,237,.045)" stroke-width="1" fill="none">
+    <path d="M0 .5H240M0 48.5H240M0 96.5H240M0 144.5H240M0 192.5H240"/>
+    <path d="M.5 0V240M48.5 0V240M96.5 0V240M144.5 0V240M192.5 0V240"/>
+  </g>
+  <g stroke="rgba(234,242,237,.075)" stroke-width="1" fill="none">
+    <path d="M0 120.5H240M120.5 0V240"/>
+  </g>
+  <g stroke="rgba(234,242,237,.10)" stroke-width="1" fill="none">
+    <path d="M116 120.5h8M120.5 116v8"/>
+    <path d="M-4 240.5h8M240.5 236v8"/>
+  </g>
+</svg>

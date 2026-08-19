@@ -1,0 +1,135 @@
+/* ── Semantic aliases ───────────────────────────────────────────
+   Design against THESE, not the raw palette.
+   :root is the dark theme (default). [data-theme="light"] flips ground.  */
+:root{
+  --bg-page:var(--torc-ink-900);
+  --bg-page-deep:var(--torc-ink-950);
+  --surface-1:var(--torc-ink-800);      /* card, panel */
+  --surface-2:var(--torc-ink-700);      /* raised, hover */
+  --surface-3:var(--torc-ink-600);      /* inset, track */
+  --surface-glass:var(--torc-alpha-fill);
+  --surface-glass-hover:var(--torc-alpha-fill-hover);
+  --surface-accent:var(--torc-green-900);
+  --surface-scrim:var(--torc-alpha-ink-60);
+  --surface-header:var(--torc-alpha-ink-88);
+
+  --text-strong:var(--torc-white);
+  --text-body:var(--torc-mist-100);
+  --text-secondary:var(--torc-sage-300);
+  --text-muted:var(--torc-sage-500);
+  --text-accent:var(--torc-green-400);
+  --text-on-accent:var(--torc-ink-900);
+  --text-link:var(--torc-green-400);
+  --text-link-hover:var(--torc-green-300);
+
+  --border-subtle:var(--torc-alpha-line);
+  --border-default:var(--torc-ink-600);
+  --border-strong:var(--torc-ink-500);
+  --border-accent:var(--torc-alpha-accent-40);
+  --border-grid:var(--torc-alpha-grid);
+  --border-tick:var(--torc-alpha-tick);
+  --border-hud:var(--torc-alpha-hud);
+
+  --accent:var(--torc-green-400);
+  --accent-hover:var(--torc-green-300);
+  --accent-press:var(--torc-green-500);
+  --accent-quiet:var(--torc-alpha-accent-12);
+
+  /* Secondary — clay. The second temperature. Surfaces, rules, punctuation.
+     Never a status, never a primary action. */
+  --secondary:var(--torc-clay-300);
+  --secondary-quiet:var(--torc-alpha-clay-12);
+  --surface-secondary:var(--torc-clay-900);
+  --border-secondary:var(--torc-alpha-clay-28);
+
+  --status-ok:var(--torc-green-400);
+  --status-ok-bg:var(--torc-green-900);
+  --status-info:var(--torc-blue-400);
+  --status-info-bg:var(--torc-blue-900);
+  --status-warn:var(--torc-amber-400);
+  --status-warn-bg:var(--torc-amber-900);
+  --status-danger:var(--torc-red-400);
+  --status-danger-bg:var(--torc-red-900);
+
+  /* Quiet status — for chips and table cells, where a label must not
+     out-punch a real action. Use -quiet as the fill, -quiet-fg as the text. */
+  --status-ok-quiet:rgba(79,209,160,.10);
+  --status-ok-quiet-fg:var(--torc-green-300);
+  --status-info-quiet:rgba(63,169,245,.10);
+  --status-info-quiet-fg:#8FCBF7;
+  --status-warn-quiet:rgba(255,176,32,.10);
+  --status-warn-quiet-fg:#F5CE84;
+  --status-danger-quiet:rgba(255,82,71,.10);
+  --status-danger-quiet-fg:#F79B94;
+
+  --focus-ring:var(--torc-green-400);
+}
+/* Paper ground. Warm neutral, not white — the reading half of the system. */
+[data-theme="light"]{
+  --bg-page:var(--torc-paper-100);
+  --bg-page-deep:var(--torc-paper-200);
+  --surface-1:var(--torc-paper-050);
+  --surface-2:var(--torc-white);
+  --surface-3:var(--torc-paper-200);
+  --surface-glass:var(--torc-alpha-fill-paper);
+  --surface-glass-hover:var(--torc-alpha-fill-paper-hover);
+  --surface-accent:#DCEFE5;
+  --surface-scrim:var(--torc-alpha-paper-72);
+  --surface-header:var(--torc-alpha-paper-90);
+
+  --text-strong:var(--torc-forest-900);
+  --text-body:#182E24;
+  --text-secondary:var(--torc-forest-700);
+  --text-muted:#5E7365;
+  --text-accent:var(--torc-green-700);
+  --text-on-accent:var(--torc-ink-900);
+  --text-link:var(--torc-green-700);
+  --text-link-hover:var(--torc-green-800);
+
+  --border-subtle:var(--torc-alpha-line-paper);
+  --border-default:var(--torc-paper-300);
+  --border-strong:var(--torc-paper-400);
+  --border-accent:rgba(47,185,138,.48);
+  --border-grid:var(--torc-alpha-grid-paper);
+  --border-tick:var(--torc-alpha-tick-paper);
+  --border-hud:var(--torc-alpha-hud-paper);
+
+  --accent:var(--torc-green-500);   /* FILLS AND RULES ONLY on paper — for accent-coloured
+                                      text use --text-accent (green-700), which clears 4.5:1 */
+  --accent-hover:var(--torc-green-600);
+  --accent-press:var(--torc-green-700);
+  --accent-quiet:rgba(47,185,138,.12);
+
+  --secondary:var(--torc-clay-500);
+  --secondary-quiet:var(--torc-alpha-clay-12);
+  --surface-secondary:var(--torc-clay-100);
+  --border-secondary:var(--torc-alpha-clay-28);
+
+  --status-ok:var(--torc-green-600);
+  --status-ok-bg:#DCEFE5;
+  --status-info:var(--torc-blue-600);
+  --status-info-bg:#DBE8F3;
+  --status-warn:var(--torc-amber-600);
+  --status-warn-bg:#F7EACC;
+  --status-danger:var(--torc-red-600);
+  --status-danger-bg:#F7DDD9;
+
+  --status-ok-quiet:#E3F1EA;
+  --status-ok-quiet-fg:var(--torc-green-700);
+  --status-info-quiet:#E2EBF4;
+  --status-info-quiet-fg:#175F94;
+  --status-warn-quiet:#F5EBD5;
+  --status-warn-quiet-fg:#8A5A00;
+  --status-danger-quiet:#F7E2DE;
+  --status-danger-quiet-fg:#A11F16;
+
+  --focus-ring:var(--torc-green-500);
+}
+/* Instrument density — how loud the HUD chrome runs. Full is the dashboard
+   and technical-diagram setting; quiet is site and decks; off is long-form
+   reading, where grids and ticks become noise. Set on any container. */
+[data-instrument="full"]{--border-grid:var(--torc-alpha-grid);--border-tick:var(--torc-alpha-tick);--border-hud:var(--torc-alpha-hud)}
+[data-theme="light"] [data-instrument="full"],[data-theme="light"][data-instrument="full"]{--border-grid:var(--torc-alpha-grid-paper);--border-tick:var(--torc-alpha-tick-paper);--border-hud:var(--torc-alpha-hud-paper)}
+[data-instrument="quiet"]{--border-grid:rgba(234,242,237,.035);--border-tick:rgba(234,242,237,.14);--border-hud:rgba(234,242,237,.18)}
+[data-theme="light"] [data-instrument="quiet"],[data-theme="light"][data-instrument="quiet"]{--border-grid:rgba(15,35,27,.03);--border-tick:rgba(15,35,27,.20);--border-hud:rgba(15,35,27,.22)}
+[data-instrument="off"]{--border-grid:transparent;--border-tick:transparent;--border-hud:transparent}
