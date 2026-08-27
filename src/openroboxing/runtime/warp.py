@@ -55,7 +55,16 @@ class WarpError(RuntimeError):
 
 @dataclass(frozen=True)
 class Leg:
-    """One pose-to-pose leg, ready to become a ``GeneratorIntent``."""
+    """One pose-to-pose leg, ready to become a ``GeneratorIntent``.
+
+    **``target_position`` is where the generator is aimed, not where the fighter ends up.** Since
+    M6-T2 the residual carries the drift gain, so the final leg's target deliberately *overshoots*
+    the ghost by the fraction the generator is measured to fall short of — that overshoot is what
+    lands the fighter on the ghost. The two coincide only when the residual is zero.
+
+    Anything that wants the endpoint the player chose — the client's ghost, the match record —
+    must use the ghost, never this. Reading this as an endpoint renders a ghost ~25 % too far out.
+    """
 
     joint_angles: Mapping[str, float]
     target_position: tuple[float, float]

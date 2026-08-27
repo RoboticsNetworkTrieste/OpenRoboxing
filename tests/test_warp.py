@@ -24,7 +24,7 @@ def record(offsets, headings, tokens):
     )
 
 
-def test_last_leg_lands_exactly_on_the_ghost():
+def test_last_leg_aims_at_the_ghost_plus_the_gain():
     """The commanded target overshoots the ghost by 1/DRIFT_GAIN, so the *generator's* undershoot
     is what actually lands the fighter on the ghost (M6-T2)."""
     from openroboxing.spec.constants import DRIFT_GAIN
