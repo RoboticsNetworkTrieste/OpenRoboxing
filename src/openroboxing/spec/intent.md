@@ -1,16 +1,25 @@
 # intent.md — the staged-intent model
 
-Version **2.2** · created 2026-08-07 · formalised 2026-08-07 by `M2-T4` · **remodelled 2026-08-08**
-· one continuous intent 2026-08-13 · aimed a leg at a time, and ended by the move rather than by a
-counter, 2026-08-17
+Version **3.0** · created 2026-08-07 · formalised 2026-08-07 by `M2-T4` · remodelled 2026-08-08 ·
+one continuous intent 2026-08-13 · aimed a leg at a time, and ended by the move rather than by a
+counter, 2026-08-17 · **a commit is a combination, and the approach is gone, 2026-08-28**
 
 Defines how a player's action reaches the generator. This is a cross-boundary structure
-(`CLAUDE.md` invariant 7), so it was specified before `runtime/intents.py` existed and is respecified
-here before that module is rewritten.
+(`CLAUDE.md` invariant 7), so it is specified before `runtime/intents.py` is rewritten against it.
 
-Status: the **model** and the **runtime semantics** below are decided and implemented in
-`runtime/intents.py`. Several **numbers** are still marked *to be measured*; per standing rule 3 they
-must come from measurement, not invention.
+Status: the model is decided — by the project owner,
+`docs/superpowers/specs/2026-08-27-motion-combinations-design.md`, decisions D1–D6 — and is
+specified here (`M6-T4`) before `runtime/intents.py` is rewritten against it (`M6-T5`).
+`runtime/intents.py` today still implements 2.2's approach and reads `SPEC_VERSION = "2.2"`; a test
+pairs this file's version with that constant, and it now fails until `M6-T5` lands — see Changelog.
+
+**`D6` — no loadout: the whole library shared and paged, nine combinations at a time — is
+owner-agreed but not yet implemented.** The client and protocol work it needs is a later phase.
+`Loadout` and per-seat loadout selection stay in the code, and "select a combination" below is
+described in terms of them, until that phase retires them.
+
+`spec/pose_record.md` is unchanged by any of this — a combination *contains* pose records, one per
+keyframe, and does not replace the schema they use.
 
 > **1.0 is a change of game, not a change of wording.** A commit used to be *a punch thrown from
 > where you stand, one at a time*. It is now **a plan: go to this place and arrive in this pose** —
@@ -24,405 +33,396 @@ must come from measurement, not invention.
 > 1.1 makes the walk **open-ended: a commit runs until the fighter arrives**, and only then throws.
 > Reported from play by the project owner on 2026-08-08; see `docs/ASSUMPTIONS.md` §A23.
 
+> **3.0 is the second change of game.** 1.0 turned a commit from *a punch thrown from where you
+> stand* into *a plan: walk here and arrive in this pose*. 3.0 removes the walk. A commit is now
+> *play this recorded combination, starting wherever you already are, its last pose landing on the
+> ghost you placed*. What a player buys with a commit is no longer a punch plus an unknown amount of
+> walking — it is a specific timed piece of motion whose length was fixed the day it was captured,
+> not by how far the ghost was dragged. Decided by the project owner, 2026-08-27; see
+> `docs/superpowers/specs/2026-08-27-motion-combinations-design.md`.
+
 ---
 
 ## The player's loop
 
-1. **Select a pose** from the loadout — a pre-authored, admitted pose record. This is the **final
-   frame of the move**, not a button that fires one.
-2. **Adjust it** within a bounded envelope (e.g. aim a punch's height/angle).
-3. **Place the shadow** — drive a ghost of your own fighter to where the move should end: root
-   position and heading, in world coordinates.
-4. **Commit.** The plan is queued. The fighter **walks until it gets there** — however long that
-   takes — and arrives in that pose on the last frame.
-5. **Keep committing.** A commit may be issued while earlier ones are still running. They execute
+1. **Select a combination** — 3–6 recorded key poses with recorded timing (`spec/combination.md`
+   0.1), from a library of ~120 built from the mocap corpus under `motions/`. Reached today through
+   the existing `Loadout` (unchanged in code; `D6` retires it later). This replaces "select a pose":
+   the unit of selection is no longer one key pose.
+2. **Place the ghost** — drag it to where the combination's **last keyframe** should land: position
+   only, world coordinates. There is no heading control any more — the ghost's heading is derived
+   from the fighter's own heading and the combination's recorded turn, never chosen (see "The
+   ghost", below).
+3. **Commit.** The plan is queued. The fighter runs the combination **starting from wherever it
+   actually is** the tick the move begins — no approach, no walk to a start — and its recorded
+   footwork carries it while whatever residual distance is left over to the ghost is added as an
+   even drift across the whole combination.
+4. **Keep committing.** A commit may be issued while earlier ones are still running. They execute
    back to back, in the order issued.
 
-A commit therefore has **no length you can read off the pose**. A jab thrown where you stand takes
-about a second; the same jab placed across the ring takes six, because five of those seconds are the
-walk. Choosing where to put the shadow is choosing how long you are committed for, and that is the
-cost the queue charges.
+A commit's length is now **exactly the recording's length**, read straight off
+`CombinationRecord.duration_ticks`, regardless of where the ghost is placed. Distance no longer buys
+time the way it did under 1.0–2.2; it buys **drift speed** instead (see "Off-target execution",
+below). Choosing where to put the ghost is choosing how hard the fighter has to run to reach it
+inside a combination's own fixed duration, not how long the commit lasts.
 
-**Run out of commits and the fighter stops.** An empty queue is not an idle animation that wanders —
-it is the `idle` clip in place. Standing still is something you choose by *not acting*, and it costs
-you the round.
+**Run out of commits and the fighter stops.** Unchanged from 1.0: an empty queue is not an idle
+animation that wanders — it is the `idle` clip in place, `OPENING_STANCE_CONTEXT` before a round's
+first commit. Standing still is something you choose by *not acting*, and it costs you the round.
 
-### What happened to walking
+### What happened to the approach
 
-There is no separate movement control, because there is no longer anything for it to do. In 0.2
-`movement` was `in`/`out`/`left`/`right`, held on a key, steering the fighter continuously while
-`placement` sat unused. In 1.0 the two collapsed: **a step is a commit whose pose is a stance**, and
-distance management is expressed by where you put the shadow. One channel, one mechanism, one thing
-to learn.
+There is nothing gradual about its removal: the whole walk-then-throw phase 1.0–2.2 built is gone in
+one step, not shrunk. `TRAVEL_CONTEXT`, `ARRIVAL_RADIUS_M`'s use as an end-of-approach test,
+`APPROACH_LEG_M`'s leg-ahead aiming, `approach_timeout_ticks` and `DEFAULT_APPROACH_TIMEOUT_TICKS`,
+and the `has_arrived` callable all go with it — see "Removed at 3.0" for the complete list and what
+replaced each.
 
-The 0.2 channel is **retired**, not deprecated — `CLAUDE.md` prefers deleting to disabling.
+**Why it is safe to remove rather than merely retire.** The approach existed because 1.0's only
+control was a placement with no idea what motion should get the fighter there — walking was invented
+to fill that gap. A combination fills it instead: it already contains the footwork (D4), so there is
+nothing left for a generic walk to do. This is not a simplification for its own sake; it is what D3
+requires — a combination starts in place because it is a specific *recorded* motion, and recorded
+motions do not have an approach phase to their own start.
+
+---
 
 ## Continuous staging — the timing model
 
-The edit channels are **continuously staged while the fight runs**. There is no pause and no edit
-mode. The player is always steering a staged intent; committing freezes whatever is staged at that
-instant.
-
-This matters because the edit takes seconds and the commit horizon is 0.6 s. Those are **not the
-same clock**:
+Unchanged in kind from 2.2: the edit channels are staged continuously while the fight runs, and
+committing freezes whatever is staged at that instant. What changed is what committing now buys,
+because the phase that used to be open-ended no longer is:
 
 | Quantity | Applies to | Value |
 |---|---|---|
-| staging | selecting / adjusting / placing the shadow | unbounded — happens during play |
-| `COMMIT_HORIZON_TICKS` | commit → execution, **as a minimum** | 30 ticks = 0.6 s — *inert, see below* |
-| reference lookahead | commit → execution, **in practice** | **65 ticks = 1.3 s** |
-| approach | walking to the placement | **open-ended** — distance ÷ `APPROACH_SPEED_M_S` |
-| pose | the strike itself, once arrived | 6–16 tokens ≈ 0.8–2.1 s |
-| `MAX_OUTSTANDING_COMMITS` | how many may be unfinished at once | **5** |
+| staging | selecting / placing the ghost | unbounded — happens during play |
+| `COMMIT_HORIZON_TICKS` | commit → execution, as a minimum | 30 ticks = 0.6 s — inert, see below |
+| reference lookahead | commit → execution, in practice | 65 ticks = 1.3 s |
+| combination | the whole move, position to ghost | **`record.duration_ticks`, fixed by the recording** — 2–5 legs of 0.8–2.13 s each (`COMBINATION_MIN/MAX_KEYFRAMES`, `MIN/MAX_TOKENS`), so 1.6–10.67 s |
+| `MAX_OUTSTANDING_COMMITS` | how many may be unfinished at once | **5**, unchanged |
 
-**Consequence:** every rate in `CLAUDE.md` stays as it is. The horizon was never a budget for the
-edit; it is the *earliest* a committed move may begin — the window that makes it readable.
+The approach row from 2.2 is simply gone: there is no phase left in this table that is open-ended,
+which is the whole content of the reversal below.
 
 ---
 
 ## Runtime semantics
 
-Settled by `M2-T4`, remodelled 2026-08-08.
+Settled by `M2-T4`, remodelled 2026-08-08, re-remodelled 2026-08-28 for motion combinations
+(`M6-T4` / `M6-T5`).
 
-### A commit's span
-
-A commit runs in **two phases**, and only the second has a length known in advance.
+### A commit's span — known when it starts, and this reverses 2.2
 
 | Field | Meaning | Known |
 |---|---|---|
 | `issued_at` | the tick the player pressed commit | at commit |
-| `commit_at` | the tick the **approach** begins — walking toward the placement | when it starts |
-| `strike_at` | the tick the fighter **arrived** and the pose was armed | when it arrives |
-| `end_tick` | the tick the **move finished** and the next may become current | when it finishes |
-| `arrived` | whether `strike_at` came from arriving or from the timeout | when it arrives |
-| `completed_by` | `settled` / `dwell` / `timeout` — what ended it | when it finishes |
+| `commit_at` | the tick this commit becomes current and starts running | as soon as the previous commit's `end_tick` is known — see below |
+| `end_tick` | the tick the combination finishes and the next may become current | the same tick, by arithmetic: `end_tick = commit_at + record.duration_ticks` |
 
-**The queue is not a schedule.** Before 1.1 every commit's span was computed the moment it was
-issued, so the whole queue's timing was known in advance. It cannot be any more: an approach ends
-when the fighter gets there, which depends on physics. `commit_at`, `strike_at` and `end_tick` are
-therefore **filled in as the commit runs** and are `None` before that. Anything reading them must
-treat `None` as "still outstanding" rather than as zero.
+**2.2 said "the queue is not a schedule."** Before 1.1 every commit's span was computed at issue
+time; 1.1 made it open-ended because an approach's length depended on distance under physics and
+could not be known until the fighter got there, so `commit_at` / `strike_at` / `end_tick` were
+filled in only as each commit ran, and `None` had to mean "still outstanding."
 
-**Only one commit is current at a time**, and it is always the oldest unfinished one. The next
-becomes current the tick the previous one ends — no gap, so a combination does not
-stutter. The `COMMIT_HORIZON_TICKS` floor still applies to each commit individually: it cannot become
-current before `issued_at + COMMIT_HORIZON_TICKS`, which is what makes an isolated commit readable.
-Committing behind a running move costs nothing extra, because the 0.6 s of warning elapses while you
-watch the move in front of it.
+**3.0 reverses that, in full.** With the approach gone, a combination's length is its recording's
+length — `record.duration_ticks`, fixed the day it was captured and known before the commit is ever
+issued. There is nothing left to watch for: `end_tick` is not stamped when a body settles, it is
+computed the instant `commit_at` is. And because `commit_at = max(issued_at + COMMIT_HORIZON_TICKS,
+previous.end_tick)` — the same floor arithmetic 1.0 introduced — and `previous.end_tick` is now
+always already known, **the whole outstanding queue's timing is computable the moment a commit is
+appended**, not only the currently-executing one. The queue *is* a schedule again, and this time the
+thing that broke it — an approach whose length depended on distance — does not exist.
+
+**This is not a claim that space is equally certain.** Time is committed the moment a commit is
+appended; where the fighter is standing when that time arrives is not, because a fighter can be
+pushed, knocked down, or simply have tracked its previous combination imperfectly. That is exactly
+what "Off-target execution", below, is for — timing and placement are no longer the same question.
+
+The two predicates from 2.2 simplify along with it, because there is no longer an unknown `end_tick`
+to guard against:
+
+- `is_scheduled(tick)` — the commit exists and has not finished: `issued_at ≤ tick < end_tick`.
+- `is_executing(tick)` — `commit_at ≤ tick < end_tick`.
+
+Both `end_tick`s here are always known, so neither predicate needs 2.2's "`None` means still
+running" rule.
+
+`arrived` and `completed_by` are gone with the phases and endings they distinguished — see "Removed
+at 3.0".
 
 #### What actually sets the floor
 
-`COMMIT_HORIZON_TICKS` is **currently inert**, and the number a player feels is not 0.6 s.
+`COMMIT_HORIZON_TICKS` is still **currently inert**, and that did not change with the approach's
+removal — it was never about the approach.
 
-The policy reads the reference motion **45 ticks (0.90 s) ahead of now** — that is what the encoder's
-`10frame_step5` terms are — and the stream keeps a further `GENERATOR_MARGIN_FRAMES` (12 frames,
-0.40 s) in front of that. So the earliest tick a commit can affect is **65 ticks ≈ 1.30 s** away:
+The policy reads the reference motion **45 ticks (0.90 s) ahead of now** — the encoder's
+`10frame_step5` terms — and the stream keeps a further `GENERATOR_MARGIN_FRAMES` (12 frames, 0.40 s)
+in front of that. So the earliest tick a commit can affect is still **65 ticks ≈ 1.30 s** away:
 everything sooner has already been generated, and re-generating it is exactly the replan that would
-delete a strike.
+delete the live leg.
 
 | | ticks | seconds | |
 |---|---|---|---|
-| encoder lookahead | 45 | 0.90 | **structural** — the policy has to see the reference ahead of itself |
-| generator margin | 20 | 0.40 | a *choice* (`runtime/reference.py`), and the only part that could shrink |
+| encoder lookahead | 45 | 0.90 | structural — the policy has to see the reference ahead of itself |
+| generator margin | 20 | 0.40 | a choice (`runtime/reference.py`), the only part that could shrink |
 | `COMMIT_HORIZON_TICKS` | 30 | 0.60 | never binds, because it is less than the sum above |
 
-This is not a regression and not new at 1.1 — it has been true since the reference stream existed —
-but 1.1 is where it became measurable, because a commit's start is now recorded. Measured: a commit
-issued at tick 10 begins at tick 75.
+Unchanged from 2.2: this is not new at 3.0, and the horizon should not be "tuned" in the meantime —
+see `docs/ASSUMPTIONS.md` §A24.
 
-**It matters because latency is the whole feel of a fighting game.** 0.6 s of readable windup is a
-design decision; 1.3 s of input lag is a different game. Whether to spend engineering on the 0.40 s
-that *is* negotiable is a `M4-T4` question — see `docs/ASSUMPTIONS.md` §A24 — and the horizon should
-not be "tuned" in the meantime, because turning a knob that does nothing is worse than leaving it.
+### Off-target execution: re-warped from wherever the fighter actually is
 
-#### Arrival
+**Owner decision, 2026-08-28.** A queued combination's `commit_at` may arrive with the fighter
+somewhere other than where the previous ghost was aimed — physics does not track a plan exactly, and
+being hit is out of distribution for the policy (`CLAUDE.md`, known traps). A combination starting
+off-target still runs, and still reaches its ghost.
 
-The approach ends when the fighter is within **`ARRIVAL_RADIUS_M`** of the placement, measured
-pelvis-to-point on the ground plane. That is a **measured** number, not a chosen one — see
-`spec/constants.py` and §Feasibility below.
+Mechanically: `runtime/warp.py::warp()` is called **again, for real**, at `commit_at`, with the
+fighter's *true* `(p₀, h₀)` at that tick as the anchor — not the position that was assumed when the
+player placed the ghost. The residual (leftover travel to the ghost) is recomputed from that real
+anchor, and the drift ramp runs however fast reaching the ghost within `record.duration_ticks` now
+requires, **even above `APPROACH_SPEED_M_S`**. Nothing is clamped and nothing raises
+(`speed_ceiling=None`); a fighter knocked far off tracks badly under physics, and physics decides the
+rest.
 
-The test is on the **real fighter under physics**, not on the generator's plan. The plan is
-kinematic and arrives every time; the fighter tracking it is the thing that has to get there.
+**The achieved drift speed is recorded in the match record**, because it is now the signal that
+tells a replay "this move was asked to run further than it was built for."
 
-#### Where the plan is aimed is not where the commit ends
+**The speed ceiling therefore validates the player's placement at issue time only.** When the player
+commits, `warp()` is called with the *projected* anchor — wherever the fighter is expected to be when
+this commit becomes current — and the default `speed_ceiling=APPROACH_SPEED_M_S`; exceeding it raises
+`WarpError` and the client shows "can't get there" before the player pays for the commit. That check
+says nothing about what happens if the fighter is somewhere else by the time the commit actually
+runs — it cannot, because the real anchor does not exist yet. See "Feasibility", below.
 
-The commit ends at its placement. The **generator** is aimed at most `APPROACH_LEG_M` (1.0 m) along
-the way there, re-derived from the fighter's true position on every frame.
+### The drift gain
 
-The two are different because MotionBricks in-betweens toward its target as the plan's *last frame*.
-Aimed at a placement three plans away, the plan arrives while the body is still walking — and a
-reference standing at the goal has nothing left to pull the body forward with. Measured 2026-08-17
-at 2.6 m off-axis: the plan sat 0.15 m from the placement while the body stalled at 0.685 m and then
-drifted back out to 0.95 m. Aimed one leg ahead, plan and body stay coupled; the same eight-bearing
-sweep completes an approach in 210–275 ticks instead of 229–405.
+`DRIFT_GAIN = 0.803` — measured 2026-08-28 across 9 combinations spanning all three corpus families
+at four drift distances, 36 (combination, distance) pairs: MotionBricks covers only about 80 % of a
+commanded residual, so `warp()` divides the residual by it before ramping, asking for more so the
+fighter actually lands on the ghost rather than 20 % short of it. Full method and the corrected
+metric (`incremental_gain`, isolating the residual's own coverage from the recording's own travel)
+are in `docs/perf/2026-08-28-drift-gain.md`.
 
-The leg is also the only speed command this stack has. Upstream's own `target_vel` (and each clip's
-`avg_root_vel`) feeds `target_root_pos`, which `has_specific_target` then overwrites — so with a
-specific target the clip's speed is inert, and how far ahead the plan is aimed over its own length
-*is* the velocity being asked for. The idea is ARDY's (SIGGRAPH 2026): place kinematic constraints
-where they can be reached and consume them as they pass.
+**The old open-ended approach hid this.** An approach that walks until `has_arrived` says so cannot
+undershoot — it just takes longer. Removing the approach is exactly what turns a hidden 20 %
+shortfall into a visible one, so the gain correction is not new caution added on top of 3.0; it is
+the price of the approach's removal, paid explicitly instead of by an approach nobody had to give a
+length.
 
-#### A move ends when it is over, not when a counter says so
+The gain applies to the **residual only, never to the recorded footwork** (D4, restated): gaining the
+recording too would re-scale a 2 cm weight-shift the same way it re-scales a 2 m drift — exactly the
+distortion D4 exists to prevent.
 
-Since 2.2 the queue does not advance on a clock. A commit ends when whoever owns a body says the
-move is finished, and `end_tick` is **stamped** at that tick rather than computed — `None` until
-then, which is the same "not yet" every other span field means.
+### The style is `walk_boxing`
 
-The test is `has_settled(commit)`, passed into `generator_intent` the way `has_arrived` already was,
-and the world's answer is *the body has stopped closing on the pose*: the best pose error over the
-last replan window is no better than the window before it, by more than
-**`POSE_SETTLE_IMPROVEMENT_RAD`**. Two windows because one cannot tell "converged" from "still
-falling"; a **replan** window because the reference is rebuilt at that cadence. Nothing settles
-before two full windows exist, so a move always lasts at least 1.0 s — the visible strike the dwell
-was protecting.
+Every leg runs in `walk_boxing` (`sequence.COMBINATION_CONTEXT`), not `walk` — measured 2026-08-28:
+`walk` permits only 6–11 tokens (`narrow_allowed_tokens` raises on 12) while a recorded leg may run
+to 16 tokens, so `walk_boxing` is the only clip whose mask can express every forced leg length.
 
-The counted dwell survives in exactly two places, both explicit:
+**This resolves `CLAUDE.md`'s sideways-gait warning, rather than ignoring it.** The warning is that
+`walk_boxing` gates out upstream's lateral blendspace (`walk_left` / `walk_right`), so a fighter
+travelling in it has no sideways gait — true, and the reason 2.1 moved the *approach's* ambient
+context to `walk`. It does not apply here, because a combination's travel no longer comes from the
+gait remap at all: it comes from `target_position`, re-derived every leg from the warp. Measured: a
+ghost 1 m to the side is reached as well as one 1 m ahead — **0.79 m either way**. The trap 2.1 fixed
+and the mechanism 3.0 uses are different enough that the same clip is safe for one and was not for
+the other.
 
-- **no settle test passed** — the caller has no body to measure (a Studio rehearsal), and
-  `POSE_DWELL_TICKS` applies as before;
-- **`MAX_DWELL_TICKS`** — the guard. An event-driven end has one failure a counter did not: a pose
-  the body never settles into would hold the whole queue forever.
+### Forced plan lengths are back, and that has a cost
 
-Each commit records **which** of the three ended it in `completed_by` (`"settled"`, `"dwell"`,
-`"timeout"`), because a replay should not have to guess.
+2.0 moved deliberately to `horizon_tokens=None` — "the model picks its own length" — because forcing
+a plan length and binding it to a commit needed machinery (`_plan_key`, `_committed_plan_length`,
+`MAX_HELD_STRIKE_FRAMES`) that produced three measured defects, recorded in full in
+`runtime/reference.py`'s module docstring:
 
-Why the counter had to go: `POSE_DWELL_TICKS` is the settle time of the *slowest* pose in the
-library, and the measured distribution is `[0, 0, 0, 0, 0, 2, 5, 12, 12, 74]` ticks — so nine moves
-in ten were waiting out somebody else's worst case. The rule is the project owner's, 2026-08-17:
-*pass targets to MotionBricks, and when the plan is finished and the robot is in position, pass the
-next one.*
+1. an 8-token pose losing its final frame — the authored pose — on 20 % of tick alignments;
+2. that lost frame then playing into the *next* commit's approach;
+3. the end-of-strike replan bypassing the ambient replan cadence.
 
-#### The approach cannot run forever
+**3.0 forces plan lengths again, on purpose, because that is what makes duration hold.** A
+combination's whole premise — that its length is knowable in advance (see "A commit's span," above)
+— is only true if each leg's plan is forced to `leg.horizon_tokens` and consumed exactly, the same
+contract 2.0 removed. `runtime/warp.py` and `runtime/sequence.py` already produce and consume that
+contract per leg — `CombinationRunner` advances on recorded ticks, not on watching a body settle —
+so the forced-plan machinery 2.0 deleted has to come back, scoped to one leg rather than one whole
+commit.
 
-An approach that is not making progress — a fighter wedged in a corner, walking into its opponent,
-or knocked down — would hold the whole queue behind it and the player would lose the round standing
-still. So an approach is capped at **`APPROACH_TIMEOUT_TICKS`**, derived from the time to walk the
-ring's diagonal at the measured approach speed.
+**The cost is the same three defects, reintroduced along with the mechanism that caused them.**
+`M6-T6` writes them as explicit regression tests rather than trusting that per-leg forcing avoids
+what per-commit forcing did not:
 
-When it fires the fighter **throws the pose where it stands** and the commit completes normally, with
-`arrived = False` recorded. It is not dropped and not retried: a commit always executes
-(§No cancellation), and a move thrown short is a visible, honest outcome the player can learn from.
-The match record carries the flag so a replay can show which moves fell short.
+1. a leg losing its final frame on some tick alignments;
+2. a lost frame playing into the next leg (or, at a combination's last leg, into the next commit);
+3. an end-of-leg replan bypassing `REPLAN_DT`.
 
-Two predicates, and they are not the same:
+### A queue, bounded, in order — unchanged
 
-- `is_scheduled(tick)` — the commit exists and has not finished: `issued_at ≤ tick`, and either
-  `end_tick` is not yet known or `tick < end_tick`. This is what the queue bound counts.
-- `is_executing(tick)` — `commit_at ≤ tick < end_tick`, with an unknown `end_tick` counting as still
-  running. The move is under way and readable — walking counts, because walking *is* the move.
+A commit is accepted while fewer than `MAX_OUTSTANDING_COMMITS` (**5**) are unfinished, and appended;
+beyond that it is refused, with an error saying when a slot next frees. Unchanged since 1.0
+(`docs/ASSUMPTIONS.md` §A19); the 2.2-era caveat about what five commits now cost in wall time still
+applies and needs re-measuring against combination lengths rather than walk-plus-pose lengths — a
+`M4-T4` question, not an `M6` one.
 
-### A queue, bounded, in order
+### No cancellation, of anything — unchanged
 
-A commit is **accepted while fewer than `MAX_OUTSTANDING_COMMITS` are unfinished**, and appended.
-Beyond that it is refused, and the error says when a slot next frees up.
+Once issued, a commit will execute — including one still waiting its turn, including a combination
+that starts off-target and has to drift hard to reach its ghost. This is the founding rule of the
+game held to its full extent, unchanged since 1.0, and it is what makes a deep queue a risk rather
+than a free lookahead.
 
-**Five** is a game-feel decision by the project owner (`docs/ASSUMPTIONS.md` §A19).
+### Staging never touches a fired commit — unchanged in rule, changed in what is staged
 
-> ⚠ **What five costs changed at 1.1.** It was chosen when a move was 0.8–2.1 s, making a full queue
-> 4–10 s of pre-planned action against a 60 s round. Now a move is its walk plus its pose, so five
-> moves placed across the ring is **20–30 s** — half a round committed in advance, unrecallable. That
-> may be exactly the tension the no-cancellation rule is for, or it may be too much; it is a feel
-> question for the first bracket (`M4-T4`), and the number has **not** been changed on a guess.
-> `docs/ASSUMPTIONS.md` §A23.
+`stage()` is legal at every tick, including mid-move, and changes only the channels it is passed. A
+`StagedIntent` is immutable once returned, so a value read earlier cannot change underfoot. What is
+staged is now a **combination** and a **ghost position**, rather than a pose, a bounded adjustment
+and a placement that also carried a heading — see "Channels", below. Unstaging the combination
+selection is not a cancellation, because nothing has fired.
 
-The 0.1 rule this replaces — *"a second commit is refused, not deferred, because deferring one would
-let a player buffer inputs and so remove the cost of committing early"* — was answered rather than
-abandoned. Buffering still costs, and costs more: a queued plan is **five moves' worth of decisions
-made before you knew what the opponent would do**, and none of them can be taken back.
+### Admission is enforced at construction — unchanged in rule, extended in scope
 
-### No cancellation, of anything
-
-Once issued, a commit will execute — including one still waiting its turn. This is the founding rule
-of the game held to its full extent, and it is what makes a deep queue a risk rather than a free
-lookahead.
-
-### Staging never touches a fired commit
-
-`stage()` is legal at every tick, including mid-move, and changes only the channels it is passed.
-A `StagedIntent` is immutable once returned, so a value read earlier cannot change underfoot.
-`clear_pose()` unstages — it is not a cancellation, because nothing has fired.
-
-### The horizon reaches the generator
-
-`horizon_tokens` was inert until `M2-T4`: `control_signals` took `allowed_pred_num_tokens` from the
-clip registry and ignored the pose. It is now passed through as a one-hot over the clip's 11-slot
-mask (index `horizon_tokens - MIN_TOKENS`, covering 6…16 tokens). Asking for a length the clip does
-not permit **raises** — a move that runs for a different length than the commit promised is a
-scoring bug, not something to fall back from.
-
-This is also what keeps the **pose phase** honest: because the token count is forced, that plan's
-length is known before it is generated, so `end_tick` follows from `strike_at` by arithmetic rather
-than by watching. The *approach* has no such guarantee and is not given one — it ends by arriving.
-
-### Admission is enforced at construction
-
-`IntentTimeline` validates every pose in the loadout when it is built, and by default refuses one
-that is not `admitted`. The Studio passes `require_admitted=False` so a draft pose can be rehearsed
-before it has been measured; a match never does.
+`IntentTimeline` (or its `M6` successor) validates every combination against `spec/combination.md`'s
+admission rule when it is built, and by default refuses one that is not `"admitted"`. The Studio
+passes `require_admitted=False` so a draft combination can be rehearsed before it has been measured;
+a match never does. Admission for a combination additionally checks **duration** — within one token
+over the whole combination (D2) — which a single pose record never needed.
 
 ---
 
 ## Channels
 
-| Channel | What it carries | Upstream support |
+| Channel | What it carries | Replaces |
 |---|---|---|
-| `pose_slot` | which loadout slot (pose record) — the move's **last frame** | needs **patch P0** (`M2-T1`) |
-| `adjustment` | bounded deviation from the base pose | needs **patch P0** |
-| `placement` | **where the move ends**: root position + heading (1.0: the primary control) | **free — already upstream** |
-| `context` | style preset = clip `mode` one-hot | **free — already upstream** |
-| `commit_at` | tick the move should begin, in 50 Hz ticks | ours |
+| `combination` | which recorded combination — 3–6 keyframes with recorded timing, from the shared library (reached via `Loadout` until `D6` lands) | `pose_slot` |
+| `ghost_position` | where the combination's **last keyframe** must land: world `(x, y)` only | `placement` (which also carried a player-set heading) |
+| `commit_at` | tick the move should begin, in 50 Hz ticks | ours, unchanged |
 
-*(0.2's `movement` channel was retired at 1.0 — see "What happened to walking".)*
+Two channels are gone outright:
 
-### Placement is free, and is now the whole point
+- **`adjustment`** — a combination carries no adjustment envelope (`spec/combination.md`: "not a
+  superset of a pose record ... carries no `adjustment_envelope`"). Bounded live deviation was a
+  single-pose feature; a combination's expressiveness comes from *which* combination is selected,
+  not from bending one.
+- **`context`** — the style preset is no longer player-facing. Every leg runs `walk_boxing` (see
+  above), so there is nothing left for this channel to choose.
 
-`full_agent._override_target_transforms` already accepts `specific_target_positions` and
-`specific_target_headings`, blended by a `has_specific_target` mask
-(`full_agent.py:298-319`, and the spring-model path at `:241-273`). No patch is required.
+### Ghost heading is derived, not staged
 
-Two measurements, and they are about different things:
+`Placement.heading` is gone as a player-set field (see "Removed at 3.0"). The ghost's heading is
+computed by `runtime/warp.py::ghost_heading` — the fighter's current heading plus the combination's
+`recorded_heading_delta`, and per keyframe `heading_i = h₀ + heading_offset_i` — and the player never
+sets it directly. See "The ghost", below, for why.
 
-- **Kinematically** (`M2` / `runtime/generator.py`) a generator commanded to `(3, 2)` ends 0.12 m
-  away, and 2.3 m from where it goes uncommanded.
-- **Under physics** an open-ended approach also arrives. Measured 2026-08-08 over ten placements
-  around a fighter — forward, lateral and behind — the worst closest approach was **0.30 m** and
-  every placement was reached inside 4.3 s (`scratchpad/probe_arrival.py`).
+### Coordinates, unchanged
 
-  **That number did not survive 2.0, and the regression was invisible for four days.** Re-measured
-  2026-08-17 with `tools/measure_approach.py` (1.5 m, eight bearings): only *forward* approaches
-  still closed. Off-axis the body stalled at 0.38–0.54 m while the plan closed to 0.02–0.19 m every
-  time, and four of seven bearings ran out the timeout and threw the pose short. Two causes, both
-  fixed the same day:
-
-  - the ambient context was `walk_boxing`, and upstream's lateral blendspace
-    (`walk_left`/`walk_right`) only swaps in when the mode is `slow_walk` or `walk` — so in the
-    boxing style a fighter has **no sideways gait at all**;
-  - `GeneratorIntent.movement_angle` was never set, so upstream read "straight ahead" as the
-    direction of travel no matter where the placement was.
-
-  With the release's `walk` context, a real travel direction and a 1.0 m leg: **seven of eight**
-  bearings arrive. The one that still does not is a placement directly behind (0.449 m against a
-  0.40 m radius), which remains open.
-
-So placement is **closed-loop, continuously**: the target is re-derived from where the fighter
-actually is on every frame generated, and the generator's own buffer tail is what it is measured
-*from*. That combination is what makes it converge, and the ordering is not interchangeable —
-
-> **Anchor the conversion on the generator's buffer tail, not on the frame the robot is playing.**
-> The tail is a lookahead ahead of the robot, so re-deriving the remaining distance from the robot
-> each frame keeps pushing the plan forward until the robot catches up: an integrator, and it settles
-> to ~0.1 m. Anchoring on the current frame instead cancels that lookahead and leaves a proportional
-> controller whose steady-state error is the policy's tracking shortfall — measured at **27 % of the
-> distance asked for** (0.22 m at 1 m, 0.49 m at 2 m, 0.81 m at 3 m). Both readings look principled;
-> only one arrives. `docs/ASSUMPTIONS.md` §A23.
-
-Before 1.1 this loop only closed **between** commits, and each commit was one fixed-length plan, so
-it converged to about 0.75 m and stopped. `docs/ASSUMPTIONS.md` §A21.
-
-Coordinates are **MuJoCo world `(x, y)` on the ground plane**, plus a heading in radians — the same
-frame the arena, the shadow and the client all use.
-
-**The generator does not plan in that frame**, and converting into its own is not optional:
-`runtime/fight.py::to_generator_frame` expresses a placement as *from where the generator is, travel
-the vector from the robot to the target*. Passing a world point through raw aims each fighter off by
-wherever its clip happened to start — the same trap `facing_angle` has always handled for angles,
-which had no counterpart for positions until 1.0.
-
-Note also the axis swap in the upstream code:
-`specific_target_positions[:, :, 1]` feeds row 0 and `[:, :, 0]` feeds row 1 (`:306-307`). The
-wrapper in `runtime/generator.py` owns this and documents it; nothing above the wrapper knows.
-
-### Pose and adjustment need the one patch
-
-Steps 1–2 are what `M2-T1` buys: extending `_override_target_transforms` to accept explicit target
-**joint** transforms. Currently it overrides root position and heading only, and the pose itself is
-sampled from the clip library by one-hot `mode` × `random_seed`
-(`_generate_target_joint_transforms`, `full_agent.py:321-391`). The injection point is the
-`(global_joint_positions, global_joint_rotations)` pair returned at `:391`.
+World `(x, y)` on the ground plane, the same frame the arena, the ghost and the client all use. The
+generator still does not plan in that frame; `runtime/warp.py` owns the conversion the way
+`runtime/generator.py` and `runtime/fight.py::to_generator_frame` did for a single placement.
 
 ---
 
-## The shadow
+## The ghost
 
-The staged intent is shown to its own player as a **ghost of their fighter**, standing at the staged
-placement in the staged pose. It is the same data the generator will be given: the pose record's
-joint angles under forward kinematics, rooted at the placement.
+Unchanged in purpose from 1.0: the staged intent is shown to its own player as a ghost of their
+fighter, computed once by the host from the combination record — never re-derived in the client, for
+the same reason a client-side kinematics pass was always rejected: a preview that ran its own
+implementation of "what this move looks like" would be free to disagree with the move that actually
+happens.
 
-**It is computed once, by the host, from the pose record** — not re-derived in the client. A preview
-that ran its own kinematics would be a second implementation of "what this move looks like", free to
-disagree with the move that actually happens.
+**What changed is what the player controls.** Before 3.0 the player set both the ghost's position
+and its heading. Now the player drags **position only** (D5): the heading is derived, and dragging
+the ghost to a new position moves where the *last keyframe* lands without changing which way the
+fighter ends up facing relative to how it started.
 
-**The opponent never sees it.** `WORKPLAN` M4-T1's "no HUD on the fighters — the windup is the only
-cue" is unchanged: staging is private, and a *committed* move becomes public only once it is
-executing, which is the moment it is readable in the world anyway. A queued-but-not-started commit is
-therefore **not** transmitted to the opponent — it has been paid for, but it has not yet been shown.
+**Why heading is derived and never chosen — restated from D5, because it is easy to get backwards.**
+The corpus's travelling combinations turn by up to **158°** end to end. A ghost that always faced the
+target, the way 1.0–2.2's placement did, would discard that turn — it is not incidental to the
+motion, it *is* the motion, the same sense in which a hook's whole point is that the fist does not
+travel in a straight line. `facing_angle` (where the fighter looks) and `movement_angle` (where it
+travels) are different signals per leg — `CLAUDE.md`'s named trap — and here the difference is not a
+bug to avoid but the content of the recording.
+
+**The opponent never sees it.** Unchanged from 1.0: `WORKPLAN` M4-T1's "no HUD on the fighters — the
+windup is the only cue" is unaffected — staging is private, and a committed move becomes public only
+once it is executing.
 
 ---
 
 ## Feasibility
 
-Two different guards, because two different things can be infeasible.
+One guard now, where 1.0–2.2 needed two.
 
-**Reach — retired at 1.1.** A move used to carry a fighter only as far as its own duration allowed,
-so a client was sent `reach_m` per slot and greyed out a shadow placed beyond it. An open-ended
-approach has no such limit: **anywhere in the ring is reachable**, and what a distant placement costs
-is *time*, not failure. The guard is replaced by an honest estimate — `APPROACH_SPEED_M_S`, measured,
-lets a client say "this will take about 4 s" before the player commits to it, which is the thing they
-actually need to know now that they cannot take it back.
+**Reach.** Under 1.1–2.2, "anywhere in the ring is reachable, and distance costs time" — true because
+the approach was open-ended. It is no longer unconditionally true: a combination has a **fixed**
+duration, so a ghost placed further than the combination can drift to within that duration, at
+`APPROACH_SPEED_M_S`, is genuinely out of reach *for that combination*, not merely slow. This is
+`runtime/warp.py::WarpError`, raised at issue time (`speed_ceiling=APPROACH_SPEED_M_S` by default).
 
-**Placement** — the root backbone also models unreachability: it has an out-of-reach token
-(`OUT_OF_REACH_NUM_TOKENS`, gated by `allow_pred_out_of_reach_num_tokens`,
-`root_backbone.py:191-194`). If the commanded position cannot be reached within the allowed token
-range, the generator can say so. Use this rather than inventing a distance limit; surface it to the
-player as "can't get there".
+Because reach now depends on the combination's own recorded duration, **the boundary differs per
+combination and moves as the player pages through the library** — a jog combination with several
+seconds to work with reaches further than a shadow-boxing combination with barely more than a second,
+for the same drift speed. A client renders this the way 1.1's `reach_m` once did per slot, but
+recomputed per combination rather than authored once.
 
-This matters more at 1.0 than it did at 0.1, because placement is now how a player moves at all: a
-shadow dragged across the ring is a request the generator may be unable to honour in the tokens the
-pose allows, and the player must be told *before* committing, not discover it by not arriving.
+**Placement, once issued, is not re-checked.** As "Off-target execution" states: the ceiling
+validates the player's placement at the moment they commit, against the anchor assumed then. What
+actually happens when the commit runs is not re-validated and cannot raise — a fighter dragged off
+its intended path by a hit is not a feasibility failure, it is the match.
 
-**Pose + adjustment** — MotionBricks is kinematic and physically unaware and will happily emit
-self-penetrating or torque-infeasible targets (`CLAUDE.md`, known traps). The base pose is admitted
-**offline** in the Studio on measured telegraph window and tracking error. The live adjustment is
-**not** individually admitted, so it must be constrained to an envelope whose corners were admitted
-offline. Validating the envelope, not the individual adjustment, is what keeps admission meaningful.
+**Pose — narrower than before, because there is no live adjustment.** Each keyframe's `joint_angles`
+is admitted exactly as a `pose_record.md` pose is: offline, on measured tracking error, because
+MotionBricks remains kinematic and physically unaware and will happily emit self-penetrating or
+torque-infeasible targets (`CLAUDE.md`, known traps). There is no envelope to validate live, because
+there is no live adjustment (see "Channels"); a combination's only per-play variable is the ghost,
+and that is exactly what the reach guard above covers.
 
-An adjustment outside the envelope, or on a joint the envelope does not cover, **raises**. Clamping
-it would silently produce a pose nobody has ever measured, which is precisely what admission exists
-to prevent.
+---
 
-### The pose target is reached — and must not be replanned over
+## Removed at 3.0
 
-`M2-T3b` first reported the pose target as a soft constraint the model ignored. **That was wrong**;
-see `spec/upstream_notes.md`. Authored poses are reached to 2–3° mean and under 11° worst, across
-guards, jabs, hooks, uppercuts and slips.
+Deleted, not deprecated — `CLAUDE.md` prefers deleting to disabling, and every one of these existed
+only to serve the approach or the counted dwell, both gone.
 
-The real constraint is temporal, not spatial. MotionBricks in-betweens from context to target, and
-the target is the plan's **last** frame, so:
+| Removed | What replaced it |
+|---|---|
+| `TRAVEL_CONTEXT` | `sequence.COMBINATION_CONTEXT` (`walk_boxing`, always — see above) |
+| the approach (walk-to-placement phase) | nothing — a combination starts in place (D3) |
+| `approach_timeout_ticks`, `DEFAULT_APPROACH_TIMEOUT_TICKS` | nothing needed: `end_tick` is exact arithmetic, not a race against a runaway approach |
+| `has_arrived` | nothing needed: there is no arrival event to test for |
+| `has_settled` | nothing needed: `end_tick = commit_at + record.duration_ticks` |
+| the counted dwell, `POSE_DWELL_TICKS` | the combination's own recorded pauses — legs with a small or zero `root_offset` are authored motion, not a wait |
+| `MAX_DWELL_TICKS` | nothing needed: nothing can hang, because nothing is being waited for |
+| `Placement.heading` as a player-set field | `runtime/warp.py::ghost_heading` — derived, never chosen (D5) |
+| the per-commit `slot` / `adjustment` as the unit of selection | the per-commit `combination` (a `CombinationRecord`) plus its anchor — see "Channels" |
 
-**While the pose phase is running, the fighter must not replan.** A replan discards the current
-plan's tail, which is the strike.
+`arrived` and `completed_by` go with the fields they distinguished, for the same reason: there is
+exactly one way a 3.0 commit ends — its recorded duration elapses — so nothing is left to record
+about *how* it ended.
 
-This is why the two phases are generated differently, and the difference is the whole mechanism:
+`APPROACH_SPEED_M_S` itself **survives, repurposed**: it was the control that governed how far an
+approach walked in a given time; it is now only the feasibility ceiling `warp()` checks a placement
+against at issue time (see "Feasibility"). It measures the same physical quantity — how fast a
+fighter can sustain travel — and nothing about that measurement changed; only what asks the question
+did.
 
-| Phase | Plan | Why |
-|---|---|---|
-| approach | **replanned** at the ambient cadence, target re-derived every frame | it has to steer; nothing is being aimed at yet |
-| pose | **one forced plan, consumed whole** | the strike is the last frame and a replan would delete it |
+---
 
-So a commit is *n* throwaway plans followed by one that must not be thrown away. Getting that
-backwards in either direction is a silent failure: replan the pose and no punch ever lands; force the
-approach and the fighter walks one plan's worth and stops — which is exactly the 1.0 bug 1.1 fixes.
+## Unchanged at 3.0
 
-**Consequence for the reference stream.** Frames are generated ahead of the tick that plays them, so
-the stream must ask what the fighter is doing **at the tick each frame will be consumed**, not at the
-tick it happens to be filling on. Getting this wrong does not crash: it slides every move a fixed
-lookahead late. See `runtime/reference.py`.
+Worth restating so a reader of this file alone knows what survived, rather than inferring it from
+absence:
 
-**And the forced plan must be consumed exactly.** A pose plan holds `horizon_tokens × 4` frames at
-30 Hz while the pose phase occupies `duration_ticks` ticks at 50 Hz, and the two grids do not divide.
-The stream must therefore bind a forced plan to the commit that forced it and discard whatever is
-left when that commit ends — otherwise a leftover frame is played as the first frame of the *next*
-commit, and the error accumulates one frame per move until a whole commit is somebody else's tail.
+- **No cancellation, of anything**, including a queued commit — the founding rule of the game.
+- `MAX_OUTSTANDING_COMMITS` = 5.
+- `COMMIT_HORIZON_TICKS` as a **floor**, not a delay — a commit queued behind a running move starts
+  the instant that move ends, because the readable window has already elapsed while it waited.
+- `OPENING_STANCE_CONTEXT` before the first commit of a round.
+- Ticks are 50 Hz (`TICK_HZ`).
+- Placement — now the ghost's position only — is MuJoCo world `(x, y)`.
+- The Studio stays offline; `require_admitted=False` is still how it rehearses drafts.
+- `test_generator_pose_override.py` against a pristine agent, and the whole runtime-installed
+  override mechanism it protects (`CLAUDE.md` invariant 3) — combinations still reach MotionBricks
+  through the same `_apply_target_pose_override` hook, one keyframe at a time.
 
 ---
 
@@ -430,21 +430,47 @@ commit, and the error accumulates one frame per move until a whole commit is som
 
 | Task | Change |
 |---|---|
-| `M2-T1` | unchanged in kind, but must also support the **adjustment envelope**, not just a fixed pose |
-| `M2-T2` | the pose record gains an **adjustment envelope** definition |
-| `M2-T5` | admission must cover the envelope, not only the base pose |
-| `M4-T1` | **larger than scoped.** Needs a 3-D client with a spatial picker (`spec/protocol.md` 0.4) |
-| `M4-T4` | owns two feel questions now: ring size, **and whether a 5-deep queue is 20–30 s too long** |
-| `M5-T2` | `TARGET_COMMIT_RATE` was calibrated against one-at-a-time commits and **needs re-measuring** |
-| `S-T1` | unchanged — the Studio stays offline, and gains envelope authoring |
-
-**Not a regression:** the "no HUD, the windup is the only cue" principle survives, and is now
-load-bearing in a second way — a queue is only a risk if the opponent cannot read it.
+| `M6-T4` | this document |
+| `M6-T5` | implements it: rewrites `runtime/intents.py`'s `Commit`, `stage`, `generator_intent` against `warp.py` / `sequence.py`; bumps `SPEC_VERSION` to `"3.0"` |
+| `M6-T6` | the three forced-plan regression tests named above, against `runtime/reference.py` |
+| `M4-T4` | still owns ring size and queue depth; now measured against combination lengths, not walk-plus-pose lengths |
+| `M5-T2` | `TARGET_COMMIT_RATE` was calibrated against the 1.0–2.2 model and needs re-measuring again |
+| Client / protocol (`D6`, `spec/protocol.md`) | a later phase: whole-library paging, no loadout, ghost position only. Not implemented; `Loadout` stays in the code until it lands |
 
 ---
 
 ## Changelog
 
+- **3.0** (2026-08-28) — **a commit is a combination, and the approach is gone.** Replaces the single
+  authored key pose with a 3–6-keyframe recorded combination (`spec/combination.md` 0.1) selected
+  from a library of ~120 built from the mocap corpus under `motions/`. A commit starts **in place**
+  (D3) instead of walking to a placement; its span is `end_tick = commit_at + record.duration_ticks`,
+  known the moment `commit_at` is, reversing 2.2's "the queue is not a schedule" — safe because an
+  approach's length depended on distance under physics and could not be known in advance, and a
+  combination's length is its recording's, which can be. The ghost's position is player-set; its
+  heading is derived from the fighter's own heading plus the combination's recorded turn and is never
+  chosen (D5) — the corpus turns by up to 158°, which a target-facing ghost would discard.
+  Intermediate keyframes keep their recorded footwork at true size and ramp the leftover travel on
+  elapsed time, not proportionally (D4) — proportional scaling needs 30–141× on shadow-boxing
+  combinations, turning a 2 cm weight-shift into a 2.8 m lurch. A combination that starts
+  off-target — because physics did not track the previous move exactly — is re-warped from the
+  fighter's real position and reaches its ghost anyway, running whatever drift that needs even above
+  `APPROACH_SPEED_M_S`; nothing is clamped and nothing raises, and the achieved drift speed is
+  recorded (owner, 2026-08-28). The generator covers only `DRIFT_GAIN` = 0.803 of a commanded
+  residual (measured, `docs/perf/2026-08-28-drift-gain.md`), a shortfall the old open-ended approach
+  hid by walking until it arrived; `warp()` now corrects for it explicitly, on the residual only.
+  Every leg runs `walk_boxing`, because `walk` cannot express the 12–16-token legs the corpus needs —
+  this resolves `CLAUDE.md`'s sideways-gait warning rather than reintroducing it, because travel now
+  comes from `target_position`, not the gait remap. Plan lengths are forced again, per leg, which is
+  what makes a leg's duration hold; `runtime/reference.py` names three defects that forcing caused
+  before, which `M6-T6` now guards as regression tests. Removed: `TRAVEL_CONTEXT`, the approach
+  itself, `approach_timeout_ticks` / `DEFAULT_APPROACH_TIMEOUT_TICKS`, `has_arrived`, `has_settled`,
+  `POSE_DWELL_TICKS`, `MAX_DWELL_TICKS`, `Placement.heading` as a player-set field, and the
+  per-commit `slot` / `adjustment` as the unit of selection. `D6` (no loadout, whole library,
+  nine-per-page paging) is owner-agreed but is a later phase — `Loadout` is unchanged in code until
+  then. Designed in `docs/superpowers/specs/2026-08-27-motion-combinations-design.md`, decisions
+  D1–D6; `SPEC_VERSION` in `intents.py` moves to `"3.0"` in the same change as the implementation
+  (`M6-T5`), and a test pairs the two — it fails from this commit until that one lands.
 - **2.2** (2026-08-17) — **a move ends when it is over.** `end_tick` is stamped rather than computed:
   `generator_intent` asks `has_settled(commit)` — has the body stopped closing on the pose? — and the
   queue advances on that instead of on `strike_at + POSE_DWELL_TICKS`. The counted dwell remains as
