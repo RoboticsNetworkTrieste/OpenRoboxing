@@ -23,6 +23,7 @@ from pathlib import Path
 import numpy as np
 
 from openroboxing.runtime.conventions import G1, G1Conventions
+from openroboxing.spec.constants import QPOS_DIM
 
 #: Suffix the corpus puts on every joint column.
 JOINT_SUFFIX = "_dof"
@@ -135,3 +136,23 @@ def read_take(path: Path) -> Take:
         joint_names=joint_names,
         frames=frames,
     )
+
+
+def to_qpos(take: Take, conventions: G1Conventions = G1) -> np.ndarray:
+    """Convert a take to ``(N, 36)`` MuJoCo qpos: metres, ``wxyz``, radians, MuJoCo joint order."""
+    from scipy.spatial.transform import Rotation
+
+    frames = take.frames
+    out = np.empty((frames.shape[0], QPOS_DIM), dtype=np.float64)
+    out[:, 0:3] = frames[:, 0:3] * CM_TO_M
+    xyzw = Rotation.from_euler(EULER_ORDER, frames[:, 3:6], degrees=True).as_quat()
+    out[:, 3] = xyzw[:, 3]  # w
+    out[:, 4:7] = xyzw[:, 0:3]  # xyz
+    perm = joint_permutation(take.joint_names, conventions)
+    out[:, 7:] = np.radians(frames[:, 6:])[:, perm]
+    return out
+
+
+def load_take(path: Path, conventions: G1Conventions = G1) -> np.ndarray:
+    """Read a corpus CSV and convert it. ``(N, 36)`` MuJoCo qpos at ``GENERATOR_HZ``."""
+    return to_qpos(read_take(path), conventions)
