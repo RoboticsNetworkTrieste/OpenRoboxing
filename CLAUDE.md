@@ -83,6 +83,7 @@ CLAUDE.md        this file — at the root, so an agent session loads it without
 README.md        what the game is, how to install it, how to run it
 LICENSING.md     ours is Apache-2.0; the weights are NVIDIA's and are downloaded, not re-hosted
 install.sh       venv, submodule, LFS, the GEAR-SONIC checkpoints, editable install
+motions/         the mocap corpus: 19 takes x 2 mirrors, Maya-style CSV at 30 fps (M5)
 pyproject.toml   the package, its dependencies, and [tool.pytest.ini_options]
 external/
   gr00t-wbc/     NVlabs/GR00T-WholeBodyControl as a submodule. Pristine. Never edited.
@@ -97,6 +98,7 @@ src/openroboxing/
     bridge.py    qpos -> policy inputs: name-derived remap, 30->50 Hz, velocities
     obs.py       observation assembly (the risky part — see parity/)
     policy.py    GEAR-SONIC via ONNX Runtime; effort limits read from the model
+    warp.py      places a recorded combination: footwork at true size, travel ramped (M5)
     world.py     one fighter under physics (M1)
     arena.py     the ring: two fighters, ropes, gloves, cameras, lights
     pool.py      one generator per fighter, and the isolation guarantee
@@ -105,10 +107,12 @@ src/openroboxing/
     match.py     rounds, clock, knockdowns, the record. Rules live here and nowhere else.
     replay.py    play a record back: re-derive the rules, or render it
   studio/        pose authoring, telegraph, regression gate (S-T3)
+                 motion_import.py + segment.py + combination_record.py build the library (M5)
   client/        ring client, fight-night screen, Pose Studio (all vanilla, no build step)
   server/        match host, protocol, agent API, Studio API
   league/        scoring, Glicko-2, Swiss pairing, season, freeze manifest
   poses/         pose library (data, versioned) · dev/ holds Studio drafts
+                 v0.1/ single key poses · v0.2/combinations/ the 120 built combinations (M5)
   tools/         CLI entrypoints — `python -m openroboxing.tools.<name>`
 tests/           unit + golden tests, fixtures under tests/fixtures/
 docs/            ASSUMPTIONS.md (every decision taken that was really the owner's),
@@ -128,6 +132,13 @@ below as `spec/…`, `runtime/…`, `tools/…` are relative to `src/openroboxin
   file declares torque limits on the *joint*, not the motor, so reading `actuator_ctrlrange` returned
   zeros and clipped every torque to nothing — silently. `policy.effort_limits` now raises instead.
 - Both are written up in `spec/upstream_notes.md`.
+- **A clip in `motions/` is not the clip upstream trained on, despite the identical name.**
+  `walk_boxing`'s `clip_id` is `shadow_boxing_R_003__A360_M` and that file is in the corpus, but
+  upstream's cached `mujoco_qpos` for it has **elbows of the opposite sign** and a 22.9 deg
+  worst-joint error at the best alignment anywhere in the take — it is a different retarget.
+  Measured 2026-08-27. Do not build a golden fixture on the assumption that they match; what
+  establishes the corpus is in the robot's convention is that every value of all 38 takes falls
+  inside the G1's own `jnt_range` (`tests/test_motion_import.py`).
 
 ## Upstream files you will read constantly
 
