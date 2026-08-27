@@ -24,7 +24,7 @@ from typing import Any
 
 import numpy as np
 
-from openroboxing.runtime.conventions import G1, G1Conventions
+from openroboxing.runtime.conventions import G1, G1Conventions, quat_wxyz_to_yaw
 from openroboxing.spec.constants import (
     COMBINATION_MAX_KEYFRAMES,
     COMBINATION_MIN_KEYFRAMES,
@@ -225,9 +225,13 @@ def save(record: CombinationRecord, path: Path) -> None:
 
 
 def _heading(qpos_row: np.ndarray) -> float:
-    """Heading in radians from a MuJoCo ``wxyz`` root quaternion: rotation about world Z."""
-    w, x, y, z = qpos_row[3:7]
-    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+    """Heading in radians from a MuJoCo ``wxyz`` root quaternion: rotation about world Z.
+
+    Delegates to the shared formula (`runtime.conventions.quat_wxyz_to_yaw`) so a recorded take's
+    heading and a live fighter's heading (`runtime.fight`) are never two independent derivations of
+    the same convention.
+    """
+    return quat_wxyz_to_yaw(qpos_row[3:7])
 
 
 def _wrap(angle: float) -> float:

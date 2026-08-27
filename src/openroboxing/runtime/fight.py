@@ -1,9 +1,25 @@
-"""Two fighters in the ring, under physics — the world a real match runs on (M3-T4).
+"""Two fighters in the ring, under physics — the world a real match runs on (M3-T4; rewritten M6-T7).
 
 This is the :class:`~openroboxing.runtime.match.MatchWorld` implementation that makes
 ``Match.run()`` an actual fight: the arena from `M3-T1`, a generator per fighter from `M3-T2`, the
 GEAR-SONIC policy from `M1-T4`, and an :class:`~openroboxing.runtime.intents.IntentTimeline` per
 fighter carrying what the player did.
+
+Rewritten for `spec/intent.md` 3.0 — the approach is gone
+-----------------------------------------------------------
+1.0 through 2.2 built a commit out of *a placement and a final pose*, and roughly a third of this
+module existed to run the walk that got a fighter there: an approach aimed a leg at a time
+(``leg_target``), a travel direction re-derived from the generator's own buffer tail
+(``travel_angle``), an arrival test (``has_arrived``) and a settle test (``has_settled``) that
+decided when a struck pose was "over". **3.0 deletes all of it.** A commit now carries a recorded
+:class:`~openroboxing.studio.combination_record.CombinationRecord` that already contains its own
+footwork and a fixed duration (``record.duration_ticks``); ``runtime/warp.py`` and
+``runtime/sequence.py`` turn that into a schedule of legs before this module ever sees it. What is
+left for `fight.py` to do is exactly what an approach never needed: supply the timeline with
+**where the fighter actually is** (:meth:`FightWorld._anchor_now`, passed as ``anchor=`` — see
+`spec/intent.md` "Off-target execution"), and convert the combination's world-frame targets into the
+frame the generator itself plans in (:meth:`FightWorld.to_generator_frame`, unchanged in kind from
+1.0-2.2 even though what feeds it changed completely).
 
 Where the rules are not
 -----------------------
@@ -32,19 +48,27 @@ Conventions
 - **Every index is derived by name** (`CLAUDE.md` invariant 4): joint qpos addresses, dof addresses
   and actuators are read out of the compiled model through ``red_``/``blue_``-prefixed names, never
   by assuming the arena lays two 36-value blocks out back to back.
-- **A fighter faces its opponent while holding.** A committed move carries its own heading in its
-  placement; the bearing only decides which way a fighter looks when its queue has run dry. See
+- **A fighter faces its opponent while holding.** A committed combination carries its own recorded
+  heading per leg; the bearing computed here only decides which way a fighter looks before its first
+  commit, in :data:`~openroboxing.runtime.intents.OPENING_STANCE_CONTEXT`. See
   :meth:`FightWorld.facing_angle`.
 - **Ticks are 50 Hz** and match every other tick in the project.
-- **World frame is MuJoCo's** — ``(x, y)`` on the ground plane. Placements, the shadow's anchor and
-  everything a client draws live here; the generator's own frame stops at ``runtime/generator.py``.
+- **World frame is MuJoCo's** — ``(x, y)`` on the ground plane. The anchor, the ghost and everything
+  a client draws live here; the generator's own frame stops at ``runtime/generator.py``.
+- **A fighter's heading is the full yaw-about-Z extraction**
+  (:func:`~openroboxing.runtime.conventions.quat_wxyz_to_yaw`), not the pure-yaw shortcut
+  :func:`apply_yaw` takes: a fighter mid-move is pitched and rolled, and reading ``(w, z)`` alone
+  would report a heading that leans. The same formula reads a recorded take's heading
+  (`studio/combination_record.py`'s ``_heading``) — one derivation, shared, per `CLAUDE.md`'s warning
+  that most bugs here are convention bugs.
 """
 
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass, replace
-from typing import Protocol, Sequence
+import math
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
+from typing import TYPE_CHECKING, Protocol
 
 import numpy as np
 
@@ -55,15 +79,9 @@ from openroboxing.runtime.arena import (
     reset_to_stance,
 )
 from openroboxing.runtime.bridge import compute_apply_delta_heading, encoder_input
-from openroboxing.runtime.conventions import G1
+from openroboxing.runtime.conventions import G1, quat_wxyz_to_yaw
 from openroboxing.runtime.generator import GeneratorIntent
-from openroboxing.runtime.intents import (
-    TRAVEL_CONTEXT,
-    IntentTimeline,
-    Loadout,
-    Placement,
-    approach_timeout_ticks,
-)
+from openroboxing.runtime.intents import OPENING_STANCE_CONTEXT, IntentTimeline
 from openroboxing.runtime.obs import ObservationBuilder, RobotState
 from openroboxing.runtime.policy import (
     GearSonicPolicy,
@@ -73,41 +91,21 @@ from openroboxing.runtime.policy import (
     pd_kp,
 )
 from openroboxing.runtime.pool import GeneratorPool
-from openroboxing.runtime.reference import REPLAN_DT, ReferenceStream
+from openroboxing.runtime.reference import ReferenceStream
 from openroboxing.spec.constants import (
-    APPROACH_LEG_M,
-    ARRIVAL_RADIUS_M,
     COMMIT_HORIZON_TICKS,
     HISTORY_LEN,
     MAX_OUTSTANDING_COMMITS,
     NUM_JOINTS,
-    POSE_SETTLE_IMPROVEMENT_RAD,
     TICK_DT,
     TICK_HZ,
 )
 
+if TYPE_CHECKING:  # `runtime` does not import `studio` at module level - see generator.py's note.
+    from openroboxing.studio.combination_record import CombinationRecord
+
 #: The free joint upstream gives the G1, before the arena prefixes it.
 ROOT_JOINT_NAME = "floating_base_joint"
-
-#: The window a settle test compares against itself, in control ticks: one replan interval. The
-#: reference is rebuilt at that cadence, so anything shorter measures the inside of a plan rather
-#: than the move.
-SETTLE_WINDOW_TICKS = int(round(REPLAN_DT * TICK_HZ))
-
-
-@dataclass
-class _Settling:
-    """One commit's pose-error trace, and the target it is measured against."""
-
-    commit: object
-    target: np.ndarray
-    trace: deque
-
-
-#: Default fighting context: the clip a fighter travels in. One name, declared beside the opening
-#: stance it is paired with — see :data:`~openroboxing.runtime.intents.TRAVEL_CONTEXT` for why it is
-#: the release's ``walk`` and not the boxing loop it used to be.
-DEFAULT_CONTEXT = TRAVEL_CONTEXT
 
 
 class FightError(RuntimeError):
@@ -153,7 +151,8 @@ class Pilot(Protocol):
 
 
 class IdlePilot:
-    """Commits nothing. The fighter moves in its context and never throws.
+    """Commits nothing. The fighter stands in :data:`~openroboxing.runtime.intents.
+    OPENING_STANCE_CONTEXT` for the whole round and never throws.
 
     Useful as a punchbag, and as the control case for anything that claims a commit caused something.
     """
@@ -166,18 +165,25 @@ class IdlePilot:
 
 
 class ScriptedPilot:
-    """Commits from a fixed list of ``(tick, slot)``, optionally with a placement.
+    """Commits from a fixed list of ``(tick, combination)`` or ``(tick, combination, ghost)``.
+
+    ``ghost`` defaults to the world origin when omitted — a script that does not care where a
+    combination lands, not a silent substitute for one that does (every entry that cares supplies its
+    own three-tuple).
 
     A script that fires into a full queue raises. That is a bug in the script, not a dropped input:
     silently skipping it would make a match's commit log disagree with the script that produced it
     (`CLAUDE.md` invariant 5).
     """
 
-    def __init__(self, script: Sequence[tuple[int, str]] | Sequence[tuple[int, str, Placement]]):
+    def __init__(
+        self,
+        script: Sequence[tuple[int, str]] | Sequence[tuple[int, str, tuple[float, float]]],
+    ):
         self.script = [tuple(entry) for entry in script]
         for entry in self.script:
             if len(entry) not in (2, 3):
-                raise FightError(f"script entry {entry!r} is not (tick, slot[, placement])")
+                raise FightError(f"script entry {entry!r} is not (tick, combination[, ghost])")
         self._fired: set[int] = set()
 
     def reset(self) -> None:
@@ -187,8 +193,8 @@ class ScriptedPilot:
         for index, entry in enumerate(self.script):
             if index in self._fired or entry[0] != tick:
                 continue
-            placement = entry[2] if len(entry) == 3 else None
-            timeline.stage(pose_slot=entry[1], placement=placement)
+            ghost = entry[2] if len(entry) == 3 else (0.0, 0.0)
+            timeline.stage(combination=entry[1], ghost=ghost)
             timeline.commit(tick)
             self._fired.add(index)
 
@@ -206,13 +212,11 @@ class FighterRuntime:
         name: str,
         model,
         generator,
-        loadout: Loadout,
+        library: Mapping[str, CombinationRecord],
         pilot: Pilot,
         *,
-        context: str = DEFAULT_CONTEXT,
         horizon_ticks: int = COMMIT_HORIZON_TICKS,
         max_outstanding: int = MAX_OUTSTANDING_COMMITS,
-        approach_timeout: int | None = None,
         require_admitted: bool = True,
     ) -> None:
         import mujoco
@@ -220,12 +224,10 @@ class FighterRuntime:
         self.name = name
         self.prefix = f"{name}_"
         self.generator = generator
-        self.loadout = loadout
+        self.library = library
         self.pilot = pilot
-        self.context = context
         self.horizon_ticks = horizon_ticks
         self.max_outstanding = max_outstanding
-        self.approach_timeout = approach_timeout
         self.require_admitted = require_admitted
 
         self.stream = ReferenceStream(generator)
@@ -290,11 +292,9 @@ class FighterRuntime:
     # -- per round ---------------------------------------------------------------------------------
     def _new_timeline(self) -> IntentTimeline:
         return IntentTimeline(
-            self.loadout,
-            context=self.context,
+            self.library,
             horizon_ticks=self.horizon_ticks,
             max_outstanding=self.max_outstanding,
-            approach_timeout_ticks=self.approach_timeout,
             require_admitted=self.require_admitted,
         )
 
@@ -330,29 +330,31 @@ class FightWorld:
     """Both fighters in the arena under physics. Satisfies ``match.MatchWorld``.
 
     Args:
-        loadouts: the poses each fighter brought. One per fighter, keyed by name.
+        libraries: the combinations each fighter may commit, one library per fighter. `D6`
+            (`spec/intent.md`) is a shared, un-loadout'd library the whole client pages through; that
+            client/protocol phase has not landed, so a caller passes one library per fighter today —
+            often the same object for both.
         pilots: what commits for each fighter. Defaults to :class:`IdlePilot` all round.
         match_seed: the one number a whole match reproduces from.
         config: ring geometry and timestep.
         policy: shared GEAR-SONIC. Built if not supplied.
         pool: the generators. Built if not supplied, seeded from ``match_seed``.
-        max_outstanding: how many commits a fighter may have unfinished at once. A tuning knob
-            (`M4-T4`) as much as a rule: since `spec/intent.md` 1.1 a move is its walk plus its pose,
-            so five is a far deeper commitment than it was.
-        require_admitted: whether loadout poses must be admitted. A match always requires it; a
-            smoke run of a draft pose may not.
+        horizon_ticks: the commit horizon floor, in ticks. Currently inert — see `spec/intent.md`
+            "What actually sets the floor".
+        max_outstanding: how many commits a fighter may have unfinished at once.
+        require_admitted: whether library combinations must be admitted. A match always requires it;
+            a smoke run of a draft combination may not.
     """
 
     def __init__(
         self,
-        loadouts: dict[str, Loadout],
+        libraries: dict[str, Mapping[str, CombinationRecord]],
         *,
         pilots: dict[str, Pilot] | None = None,
         match_seed: int = 1234,
         config: ArenaConfig | None = None,
         policy: GearSonicPolicy | None = None,
         pool: GeneratorPool | None = None,
-        context: str = DEFAULT_CONTEXT,
         horizon_ticks: int = COMMIT_HORIZON_TICKS,
         max_outstanding: int = MAX_OUTSTANDING_COMMITS,
         require_admitted: bool = True,
@@ -360,21 +362,22 @@ class FightWorld:
         import mujoco
 
         self._mujoco = mujoco
-        missing = [f for f in FIGHTERS if f not in loadouts]
+        missing = [f for f in FIGHTERS if f not in libraries]
         if missing:
-            raise FightError(f"no loadout for {missing}; every fighter brings one")
+            raise FightError(f"no combination library for {missing}; every fighter brings one")
 
         self.config = config or ArenaConfig()
         self.match_seed = match_seed
         self.model = build_arena(self.config)
         self.data = mujoco.MjData(self.model)
-        self.substeps = max(1, int(round(TICK_DT / self.model.opt.timestep)))
-        #: How far ahead an approach aims the generator (:data:`APPROACH_LEG_M`). An attribute, not
-        #: the constant itself, so a bench can turn it — including to zero, which aims at the whole
-        #: placement the way the runtime did before 2026-08-17.
-        self.approach_leg_m = float(APPROACH_LEG_M)
-        #: Per-fighter settle traces, rebuilt whenever a different commit starts holding a pose.
-        self._settling: dict[str, _Settling] = {}
+        self.substeps = max(1, round(TICK_DT / self.model.opt.timestep))
+        #: Achieved drift speed (m/s) per commit, keyed by ``id(commit)`` — see :meth:`_record_drift`.
+        #: A side table rather than a field on ``Commit`` because ``runtime/intents.py`` is upstream
+        #: of this module and untouched by this rewrite (`spec/intent.md` 3.0's "Off-target
+        #: execution": the number this module wants is not exposed by the timeline at all, since it
+        #: is derived from the *same* anchor/ghost/record inputs the timeline already re-warped from,
+        #: recomputed here rather than duplicated into ``intents.py``).
+        self._drift_speed_m_s: dict[int, float] = {}
 
         self.policy = policy or GearSonicPolicy()
         self.pool = pool or GeneratorPool(match_seed=match_seed)
@@ -390,14 +393,10 @@ class FightWorld:
                 name,
                 self.model,
                 self.pool[name],
-                loadouts[name],
+                libraries[name],
                 pilots.get(name) or IdlePilot(),
-                context=context,
                 horizon_ticks=horizon_ticks,
                 max_outstanding=max_outstanding,
-                # Derived from *this* ring, not the competition default: a match that shrinks the
-                # ring must shrink the patience a stalled approach is given with it.
-                approach_timeout=approach_timeout_ticks(self.config.ring_size),
                 require_admitted=require_admitted,
             )
             for name in FIGHTERS
@@ -416,12 +415,18 @@ class FightWorld:
         reset_to_stance(self.model, self.data, self.config)
         self.pool.reset(round_index=index)
         self._round = index
+        # Last round's drift readings are keyed by commit objects that no longer exist once
+        # `FighterRuntime.reset_round` rebuilds each timeline below — carrying them forward would
+        # either leak memory over a long match or, worse, collide if Python reuses an `id()`.
+        self._drift_speed_m_s.clear()
 
         for fighter in self.fighters.values():
             fighter.reset_round()
-            # The ambient intent, not the timeline's: no commit can be executing at tick 0, and the
-            # timeline needs a facing angle that needs a heading that this call is what produces.
-            ambient = GeneratorIntent(style=fighter.context)
+            # The ambient intent, not the timeline's: no commit can be executing at tick 0, and a
+            # fighter that has committed nothing yet stands in the opening stance
+            # (`intents.OPENING_STANCE_CONTEXT`) rather than any travelling style — there is no
+            # ambient "walking" context left once the approach is gone.
+            ambient = GeneratorIntent(style=OPENING_STANCE_CONTEXT)
             fighter.stream.ensure(lambda _tick, _i=ambient: _i, tick=0)
             fighter.apply_delta_heading = compute_apply_delta_heading(
                 init_base_quat_wxyz=fighter.base_quat(self.data),
@@ -439,8 +444,8 @@ class FightWorld:
         for fighter in self.fighters.values():
             fighter.pilot.act(fighter.timeline, tick)
             # The bearing is captured now and reused for every frame this fill produces. It is only
-            # the *hold* facing — a committed move carries its own heading in its placement — and a
-            # fighter that is holding is by definition not moving, so a bearing that is up to a
+            # the *hold* facing — a committed combination carries its own recorded heading per leg —
+            # and a fighter that is holding is by definition not moving, so a bearing that is up to a
             # lookahead stale is a bearing that has not changed.
             bearing = self.facing_angle(fighter.name)
             fighter.stream.ensure(
@@ -462,64 +467,6 @@ class FightWorld:
             targets[fighter.name] = action_to_joint_target(action)
 
         self._step_physics(targets)
-        for fighter in self.fighters.values():
-            self._sample_pose_error(fighter)
-
-    # -- settling ------------------------------------------------------------------------------------
-    def _sample_pose_error(self, fighter: FighterRuntime) -> None:
-        """Record how far this fighter's body is from the pose it is currently holding.
-
-        One sample per tick, after physics, so the trace is at the control rate whatever rate the
-        generator is asking questions at. It belongs to **one** commit: a new move resets it, because
-        "the error stopped shrinking" must be a statement about the move being judged.
-        """
-        commit = None
-        for candidate in reversed(fighter.timeline.commits):
-            if candidate.strike_at is not None and candidate.ended_at is None:
-                commit = candidate
-                break
-
-        held = self._settling.get(fighter.name)
-        if commit is None:
-            self._settling.pop(fighter.name, None)
-            return
-        if held is None or held.commit is not commit:
-            target = np.array(
-                [commit.pose.joint_angles[name] for name in G1.mujoco_joint_names],
-                dtype=np.float64,
-            )
-            held = _Settling(commit=commit, target=target, trace=deque(maxlen=2 * SETTLE_WINDOW_TICKS))
-            self._settling[fighter.name] = held
-
-        measured = np.asarray(fighter.robot_state(self.data).joint_pos, dtype=np.float64)
-        held.trace.append(float(np.abs(measured - held.target).mean()))
-
-    def has_settled(self, fighter: str, commit) -> bool:
-        """Whether ``commit``'s move is over: the body has stopped closing on its pose.
-
-        The rule the project owner asked for — *the next target goes in when the plan is finished and
-        the robot is in position* — needs a causal test, and "the error has converged" as
-        ``tools/measure_dwell.py`` defines it is not one: that definition reads the whole run to find
-        the asymptote first. The live analogue compares two consecutive replan windows and asks
-        whether the second beat the first: if the best error over the last window is no better than
-        the window before it by more than
-        :data:`~openroboxing.spec.constants.POSE_SETTLE_IMPROVEMENT_RAD`, the fighter is as near the
-        pose as it is going to get and the queue may move on.
-
-        Two windows, not one, because a single window cannot tell "converged" from "still falling" —
-        and one **replan** window rather than any other length because the reference is rebuilt at
-        that cadence, so a shorter window measures the inside of a plan rather than the move.
-
-        Nothing is settled before there are two full windows to compare, so a move always lasts at
-        least ``2 * SETTLE_WINDOW_TICKS`` (1.0 s) — the visible strike the dwell exists to protect.
-        """
-        held = self._settling.get(fighter)
-        if held is None or held.commit is not commit or len(held.trace) < 2 * SETTLE_WINDOW_TICKS:
-            return False
-        trace = list(held.trace)
-        recent = min(trace[SETTLE_WINDOW_TICKS:])
-        before = min(trace[:SETTLE_WINDOW_TICKS])
-        return recent >= before - POSE_SETTLE_IMPROVEMENT_RAD
 
     def observe(self, tracker, trace, tick: int) -> None:
         tracker.observe(self.model, self.data, tick)
@@ -533,6 +480,12 @@ class FightWorld:
 
         The commit log is per round because :meth:`reset_round` builds a fresh timeline: a round's
         record must hold that round's commits and no others.
+
+        ``drift_speed_m_s`` is ``None`` for a commit that has not started yet (nothing to measure)
+        and a finite number from the instant it does — see :meth:`_record_drift`. It is present for
+        every *started* commit unconditionally, not only the ones that drifted hard, because a move
+        that tracked its ghost cleanly at a low drift speed is exactly the baseline a high one is
+        read against (`spec/intent.md` "The achieved drift speed is recorded in the match record").
         """
         events: list[dict] = []
         for name, fighter in self.fighters.items():
@@ -540,22 +493,12 @@ class FightWorld:
                 events.append(
                     {
                         "fighter": name,
-                        "slot": commit.slot,
-                        "pose_name": commit.pose.name,
+                        "combination": commit.record.name,
+                        "ghost": list(commit.ghost),
                         "issued_at": commit.issued_at,
                         "commit_at": commit.commit_at,
-                        "strike_at": commit.strike_at,
                         "end_tick": commit.end_tick,
-                        "arrived": commit.arrived,
-                        "placement": (
-                            None
-                            if commit.placement is None
-                            else {
-                                "position": list(commit.placement.position),
-                                "heading": commit.placement.heading,
-                            }
-                        ),
-                        "adjustment": dict(commit.adjustment),
+                        "drift_speed_m_s": self._drift_speed_m_s.get(id(commit)),
                     }
                 )
         return sorted(events, key=lambda e: (e["issued_at"], e["fighter"]))
@@ -570,201 +513,148 @@ class FightWorld:
         positions = [self.data.xpos[f.pelvis_body][:2] for f in self.fighters.values()]
         return float(np.linalg.norm(positions[0] - positions[1]))
 
-    def root_pose(self, fighter: str) -> Placement:
-        """Where a fighter is standing right now, in **world** terms: ``(x, y)`` and a yaw.
-
-        This is the shadow's fallback anchor — where the next commit starts from when the queue is
-        drained (`spec/protocol.md` §The shadow). World frame, not the generator's: a placement is
-        something the player points at on a ring they can see, and the conversion into the
-        generator's frame is `runtime/generator.py`'s business.
-        """
-        me = self.fighters[fighter]
-        position = self.data.xpos[me.pelvis_body]
-        quat = self.data.qpos[me.root_qpos[3:7]]
-        # Yaw of a full orientation quaternion, not the yaw-only shortcut apply_yaw takes: a fighter
-        # mid-move is pitched and rolled, and reading (w, z) alone would report a heading that leans.
-        yaw = float(
-            np.arctan2(
-                2.0 * (quat[0] * quat[3] + quat[1] * quat[2]),
-                1.0 - 2.0 * (quat[2] ** 2 + quat[3] ** 2),
-            )
-        )
-        return Placement(position=(float(position[0]), float(position[1])), heading=yaw)
-
-    def anchor(self, fighter: str, tick: int) -> Placement:
-        """Where ``fighter`` will be standing once its queue has run out.
-
-        The last queued commit's placement, or its current root pose when nothing is outstanding.
-        The shadow hangs off this rather than off the live position, which moves under the player's
-        cursor for the whole duration of every move.
-        """
-        queued = self.fighters[fighter].timeline.anchor_placement(tick)
-        return queued if queued is not None else self.root_pose(fighter)
-
     def opponent(self, fighter: str) -> str:
         others = [f for f in FIGHTERS if f != fighter]
         if len(others) != 1:
             raise FightError(f"{fighter!r} has {len(others)} opponents; a bout is two fighters")
         return others[0]
 
-    def to_generator_frame(self, fighter: str, placement: Placement) -> Placement:
-        """A world placement, expressed in the frame the generator plans in::
+    def _anchor_now(self, fighter: FighterRuntime) -> tuple[tuple[float, float], float]:
+        """Where ``fighter`` actually is right now: world ``(x, y)`` and yaw, read off live physics.
+
+        Passed as :meth:`~openroboxing.runtime.intents.IntentTimeline.generator_intent`'s ``anchor``
+        argument. The timeline calls it **exactly once per commit**, at the tick that commit starts,
+        to warp the combination into place from wherever the fighter genuinely stands rather than
+        wherever it was aimed to be (`spec/intent.md` "Off-target execution") — this method is the
+        one piece of geometry that makes that possible, since the timeline itself is deliberately
+        ignorant of where anyone is (`runtime/intents.py`'s module docstring).
+
+        Position is the pelvis, not the free joint's own translation — the same body every other
+        world-frame reading in this module (:meth:`separation_m`, :meth:`facing_angle`) uses, so a
+        combination starts from the same point the client already renders. Heading is the full
+        yaw-about-Z extraction (:func:`~openroboxing.runtime.conventions.quat_wxyz_to_yaw`), not the
+        yaw-only shortcut :func:`apply_yaw` takes, because a fighter is not guaranteed to be upright
+        the instant a queued commit becomes current.
+        """
+        position = self.data.xpos[fighter.pelvis_body][:2]
+        heading = quat_wxyz_to_yaw(self.data.qpos[fighter.root_qpos[3:7]])
+        return (float(position[0]), float(position[1])), heading
+
+    def to_generator_frame(
+        self, fighter: str, position: tuple[float, float], heading: float
+    ) -> tuple[tuple[float, float], float]:
+        """A world position and heading, expressed in the frame the generator plans in::
 
             target_gen = context_gen + R(-yaw) . (target_world - robot_world)
 
         In words: *from where the generator is, travel the vector from the robot to the target.*
+        Unchanged in kind since 1.0-2.2, even though what feeds it changed completely: a warped
+        combination's leg targets are world-frame positions exactly like a 1.0-2.2 placement was, and
+        the generator still does not plan in that frame (`spec/intent.md` "Coordinates, unchanged").
 
         **The conversion is not optional and omitting it is not obviously wrong.** The generator
         plans in its own frame — its context is its own previous output, starting near the origin —
-        while a placement is a point on a ring the player can see. Red starts at ``x = -1.2`` yawed
+        while a leg target is a point on a ring the player can see. Red starts at ``x = -1.2`` yawed
         one way and blue at ``+1.2`` yawed the other, so a raw world target lands somewhere else
-        entirely for each of them and the fighter walks a plausible distance in the wrong direction.
-        :meth:`facing_angle` has always done the same conversion for angles via
+        entirely for each of them and the fighter is driven a plausible distance in the wrong
+        direction. :meth:`facing_angle` has always done the same conversion for angles via
         :func:`generator_heading`; this is its counterpart for positions, and both use the same yaw.
 
         Two anchors are defensible and only one arrives
         -----------------------------------------------
         The vector is measured **from the robot**, and it is applied **from the generator's buffer
         tail** — the position it will have planned up to, a lookahead in front of the robot. Those
-        two choices are what make an approach converge, and neither is interchangeable.
-
-        Measuring from the robot is the feedback. MotionBricks is kinematic: its plan arrives at the
-        target while the policy tracking it under physics lands short. Anchored instead on the
-        generator's belief about itself, a fighter concludes it has already arrived and plans to
-        stand still — which is why, before `spec/intent.md` 1.1, five queued moves at one target got
-        no further than one did.
-
-        Applying it from the tail is what makes the feedback *integrate*. Because the tail is already
-        ahead, re-deriving the remaining distance from the robot each frame keeps pushing the plan
-        forward until the body catches up; measured, that settles to about 0.1 m. Anchoring on the
-        frame the robot is playing right now looks more principled — it cancels the lookahead — but
-        it turns the loop proportional, and its steady-state error is the tracking shortfall itself:
-        **0.22 m at 1 m, 0.49 m at 2 m, 0.81 m at 3 m**, i.e. 27 % of whatever was asked for
-        (2026-08-08, ``scratchpad/probe_approach.py``). An integrator that looks wrong beat a
-        proportional controller that looks right.
-
-        Within the **pose** phase there is no correction, because a committed plan must not be
-        replanned over (`spec/intent.md`). The approach has no such restriction and re-derives every
-        frame, which is where all the convergence happens.
+        two choices are what made a 1.0-2.2 approach converge, and the same reasoning still holds for
+        a combination's own drift: MotionBricks is kinematic and arrives at a target every time, so
+        anchoring the vector on the generator's own belief about itself (rather than on the live
+        robot) would have a fighter conclude it has already arrived and stand still, exactly the 1.0
+        defect `spec/intent.md`'s changelog records. Re-deriving the vector from the robot every tick
+        keeps a leg's target honest for its whole duration, the same integration that made an
+        approach close.
         """
         me = self.fighters[fighter]
         here = self.data.xpos[me.pelvis_body][:2]
         context = me.generator.context_qpos()[-1][:2]
 
-        delta = np.asarray(placement.position, dtype=np.float64) - here
+        delta = np.asarray(position, dtype=np.float64) - here
         cos, sin = np.cos(-me.apply_yaw), np.sin(-me.apply_yaw)
         rotated = np.array([cos * delta[0] - sin * delta[1], sin * delta[0] + cos * delta[1]])
         moved = context + rotated
-        return Placement(
-            position=(float(moved[0]), float(moved[1])),
-            heading=generator_heading(placement.heading, me.apply_delta_heading),
-        )
+        return (float(moved[0]), float(moved[1])), generator_heading(heading, me.apply_delta_heading)
 
-    def has_arrived(self, fighter: str, commit) -> bool:
-        """Whether ``fighter`` is near enough to ``commit``'s placement to stop walking and throw.
+    def _record_drift(self, commit, anchor: tuple[tuple[float, float], float]) -> None:
+        """Compute and store the drift speed a commit's warp implied, the tick it started.
 
-        Pelvis to point on the ground plane, against :data:`ARRIVAL_RADIUS_M` — a **measured**
-        radius: over ten placements around a fighter the worst closest approach was 0.30 m, and all
-        ten reached 0.40 m (`spec/constants.py`). Tighter than that and an approach can fail to
-        close, which does not merely miss — it holds the whole queue behind it until the timeout.
+        Owner decision, 2026-08-28 (`spec/intent.md` "Off-target execution" / "The achieved drift
+        recorded"): a queued combination that starts off-target still reaches its ghost, running
+        whatever drift that needs, and the drift speed that implies must be visible in the match
+        record rather than silent. ``runtime/warp.py::warp()`` computes exactly this number
+        internally but only when checking it against a ceiling (``speed_ceiling is not None``); the
+        execution-time call the timeline makes passes ``speed_ceiling=None`` (nothing clamps, nothing
+        raises), which skips that branch and returns only the legs. Rather than teach ``warp()`` or
+        ``intents.py`` to expose it — both out of scope for this rewrite — this recomputes the same
+        formula from the same inputs, all of which are already public on ``commit``:
 
-        Measured on the **fighter under physics**, not on the generator's plan. The plan is kinematic
-        and arrives every time; the body tracking it is the thing that has to get there, and the gap
-        between the two is exactly what an open-ended approach exists to close.
+            drift_speed = |ghost - anchor_position - R(anchor_heading) . recorded_displacement|
+                          / (duration_ticks / TICK_HZ)
 
-        Read a lookahead early, because the frame this decides is played about a second later. That
-        is survivable in the one direction it errs: an approach decelerates into its target rather
-        than running through it, so arming the pose slightly early lands the strike at the placement
-        rather than past it.
+        Called from :meth:`_intent_at` only on the tick a commit actually starts (guarded by the
+        caller having seen its own ``anchor`` callable invoked), so this runs at most once per
+        commit — matching the one time the timeline itself samples the anchor.
         """
-        me = self.fighters[fighter]
-        if commit.placement is None:
-            raise FightError(
-                f"{fighter}: asked whether a commit with no placement has arrived; a commit without "
-                "one has nowhere to walk to and never approaches"
-            )
-        here = self.data.xpos[me.pelvis_body][:2]
-        target = np.asarray(commit.placement.position, dtype=np.float64)
-        return bool(np.linalg.norm(target - here) <= ARRIVAL_RADIUS_M)
+        (ax, ay), heading = anchor
+        dx, dy = commit.record.recorded_displacement
+        cos_h, sin_h = math.cos(heading), math.sin(heading)
+        rotated = (cos_h * dx - sin_h * dy, sin_h * dx + cos_h * dy)
+        residual = (
+            commit.ghost[0] - ax - rotated[0],
+            commit.ghost[1] - ay - rotated[1],
+        )
+        duration_s = commit.record.duration_ticks / TICK_HZ
+        self._drift_speed_m_s[id(commit)] = math.hypot(*residual) / duration_s
 
     def _intent_at(self, fighter: FighterRuntime, play_tick: int, bearing: float) -> GeneratorIntent:
         """This fighter's control signals for the tick a generated frame will be played at.
 
         Two frames meet here and nowhere else. The timeline deals only in **world** coordinates — it
         is what the player and the client see — and the generator plans in its own, so the conversion
-        happens at this boundary. The arrival test likewise: the timeline owns *when* a commit stops
-        walking, this owns *where the fighter is*.
+        happens at this boundary.
+
+        The ``anchor`` passed to the timeline is wrapped so this method can tell, after the call,
+        whether a commit just started: :meth:`~openroboxing.runtime.intents.IntentTimeline.
+        generator_intent` calls ``anchor`` exactly once per commit, at the tick it starts, so an
+        empty ``seen`` list after the call means no commit started this tick, and a non-empty one
+        means exactly one did — the drift speed that starting implied is recorded right there.
         """
-        intent = fighter.timeline.generator_intent(
-            play_tick,
-            facing_angle=bearing,
-            has_arrived=lambda commit, _n=fighter.name: self.has_arrived(_n, commit),
-            has_settled=lambda commit, _n=fighter.name: self.has_settled(_n, commit),
-        )
+        seen: list[tuple[tuple[float, float], float]] = []
+
+        def _anchor(_f=fighter) -> tuple[tuple[float, float], float]:
+            value = self._anchor_now(_f)
+            seen.append(value)
+            return value
+
+        intent = fighter.timeline.generator_intent(play_tick, facing_angle=bearing, anchor=_anchor)
+
+        if seen:
+            starting = next(
+                (c for c in fighter.timeline.commits if c.commit_at == play_tick), None
+            )
+            if starting is not None:
+                self._record_drift(starting, seen[0])
+
         if intent.target_position is None:
             return intent
 
-        leg = self.leg_target(
-            fighter.name, Placement(intent.target_position, intent.target_heading)
+        position, heading = self.to_generator_frame(
+            fighter.name, intent.target_position, intent.target_heading
         )
-        placement = self.to_generator_frame(fighter.name, leg)
         return replace(
             intent,
-            target_position=placement.position,
-            target_heading=placement.heading,
-            facing_angle=placement.heading,
-            movement_angle=self.travel_angle(fighter.name, placement),
+            target_position=position,
+            target_heading=heading,
+            facing_angle=generator_heading(intent.facing_angle, fighter.apply_delta_heading),
+            movement_angle=generator_heading(intent.movement_angle, fighter.apply_delta_heading),
         )
-
-    def leg_target(self, fighter: str, placement: Placement) -> Placement:
-        """The next point of the approach: at most :data:`APPROACH_LEG_M` towards ``placement``.
-
-        The commit still ends at its placement — :meth:`has_arrived` is unchanged and still measures
-        the body against the point the player chose. What moves is where the *plan* is aimed, and it
-        moves for one reason: MotionBricks in-betweens toward the target as its plan's last frame, so
-        a target further than one plan can carry produces a plan that arrives while the body is still
-        walking. After that the reference is standing at the goal with nothing left to pull the body
-        forward, which is the stall measured at 2.6 m off-axis (`spec/constants.py`).
-
-        Re-derived from the fighter's true position on every frame, so a leg needs no bookkeeping to
-        be consumed: it slides forward as the body moves and collapses onto the placement itself once
-        the fighter is within one leg of it. Setting :attr:`approach_leg_m` to zero aims the
-        generator at the whole distance again, which is what the bench's knob is for.
-        """
-        if self.approach_leg_m <= 0.0:
-            return placement
-        me = self.fighters[fighter]
-        here = np.asarray(self.data.xpos[me.pelvis_body][:2], dtype=np.float64)
-        delta = np.asarray(placement.position, dtype=np.float64) - here
-        distance = float(np.linalg.norm(delta))
-        if distance <= self.approach_leg_m:
-            return placement
-        step = here + delta * (self.approach_leg_m / distance)
-        return Placement(position=(float(step[0]), float(step[1])), heading=placement.heading)
-
-    def travel_angle(self, fighter: str, target_gen: Placement) -> float:
-        """Which way the fighter is **going**, in the generator's frame. Not where it is facing.
-
-        Upstream reads two directions and they are not the same signal. ``facing_direction`` is where
-        the fighter looks; ``movement_direction`` is where it travels, and their difference is what
-        selects a gait: ``blendspace_modes_remap_from_velocity`` swaps ``walk`` for ``walk_left`` or
-        ``walk_right`` when the two differ by more than 45° (``demo/clips.py``). Left unset it
-        defaults to 0.0 — "straight ahead, always" — which is how a fighter came to have no sideways
-        gait no matter where its placement was, and to walk an off-axis approach as one long turn.
-
-        Measured from the generator's own buffer tail, the same anchor
-        :meth:`to_generator_frame` applies the target from, so the two agree about what "remaining"
-        means. Inside :data:`ARRIVAL_RADIUS_M` the fighter is *there*: the direction to a target you
-        are standing on is noise, and feeding it would flip the gait between left and right for the
-        whole dwell, so travel collapses onto the heading and the remap stops firing — which is the
-        correct thing for a fighter that is no longer going anywhere.
-        """
-        me = self.fighters[fighter]
-        context = me.generator.context_qpos()[-1][:2]
-        delta = np.asarray(target_gen.position, dtype=np.float64) - context
-        if float(np.linalg.norm(delta)) <= ARRIVAL_RADIUS_M:
-            return float(target_gen.heading)
-        return float(np.arctan2(delta[1], delta[0]))
 
     def facing_angle(self, fighter: str) -> float:
         """The **generator-frame** heading that points a fighter at its opponent.

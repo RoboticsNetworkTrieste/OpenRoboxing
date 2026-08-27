@@ -441,3 +441,23 @@ def quat_xyzw_to_wxyz(q: np.ndarray) -> np.ndarray:
     if arr.shape[-1] != 4:
         raise ConventionError(f"expected a quaternion on the last axis, got shape {arr.shape}")
     return arr[..., [3, 0, 1, 2]]
+
+
+def quat_wxyz_to_yaw(quat: np.ndarray) -> float:
+    """Heading in radians from a MuJoCo ``wxyz`` quaternion: rotation about world Z.
+
+    The full extraction, not the pure-yaw shortcut a product of two yaw-only quaternions allows
+    (``runtime.fight.apply_yaw``): valid for any orientation, including a body that is also pitched
+    or rolled, because it reads only the Z-axis component of the rotation rather than assuming there
+    is no other one.
+
+    Shared so a live fighter's heading (``runtime.fight``) and a recorded take's heading
+    (``studio.combination_record``) are read off a quaternion by the identical formula — two
+    independent derivations of the same convention are exactly how a sign or axis error would go
+    unnoticed (`CLAUDE.md`: most bugs here are convention bugs).
+    """
+    arr = np.asarray(quat)
+    if arr.shape[-1] != 4:
+        raise ConventionError(f"expected a quaternion on the last axis, got shape {arr.shape}")
+    w, x, y, z = arr[..., 0], arr[..., 1], arr[..., 2], arr[..., 3]
+    return float(np.arctan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z)))

@@ -1,8 +1,14 @@
-"""Two fighters in the ring under physics (M3-T4's world).
+"""Two fighters in the ring under physics (M3-T4's world; rewritten M6-T7 for combinations).
 
 The fast tests here cover what does not need a GPU and is where the bugs actually are: the
 name-derived indices into a shared ``MjData`` (`CLAUDE.md` invariant 4), the world-to-generator
-heading conversion, and the pilots. The slow ones run the thing.
+heading conversion, the pilots, and the live anchor `spec/intent.md` 3.0's off-target execution
+depends on. The slow ones run the thing.
+
+`runtime/intents.py`, `runtime/warp.py` and `runtime/sequence.py` already have their own test
+suites (`test_intents_combinations.py`, `test_warp.py`, `test_sequence.py`) covering the commit
+queue's arithmetic and the warp's geometry in isolation; this file does not re-test those — it tests
+the one thing that is `fight.py`'s alone: wiring a *live* fighter into that machinery.
 
 Reproduce:
     .venv_mb/bin/python -m pytest tests/test_fight.py -v
@@ -11,10 +17,12 @@ Reproduce:
 
 from __future__ import annotations
 
+import math
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
-from openroboxing.paths import LOADOUT_DIR
 from openroboxing.runtime.arena import FIGHTERS, ArenaConfig, build_arena, reset_to_stance
 from openroboxing.runtime.bridge import compute_apply_delta_heading, heading_quat, quat_multiply
 from openroboxing.runtime.conventions import G1
@@ -27,13 +35,45 @@ from openroboxing.runtime.fight import (
     apply_yaw,
     generator_heading,
 )
-from openroboxing.runtime.intents import IntentError, IntentTimeline, Loadout, Placement
+from openroboxing.runtime.intents import IntentError, IntentTimeline
 from openroboxing.spec.constants import (
-    APPROACH_LEG_M,
-    ARRIVAL_RADIUS_M,
+    COMMIT_HORIZON_TICKS,
+    MAX_OUTSTANDING_COMMITS,
     NUM_JOINTS,
     QPOS_DIM,
+    TICK_HZ,
 )
+from openroboxing.studio.combination_record import CombinationRecord, CombinationSource, Keyframe
+
+ANGLES = {name: 0.0 for name in G1.mujoco_joint_names}
+
+
+def _combination(
+    name: str,
+    *,
+    offsets=((0.3, 0.0), (0.6, 0.0)),
+    headings=(0.0, 0.0),
+    tokens=(6, 6),
+    admitted: bool = True,
+) -> CombinationRecord:
+    """A small, admitted combination — two legs, cheap enough to drive a fight through fully.
+
+    Mirrors the builder in `test_intents_combinations.py`; each file keeps its own copy rather than
+    sharing a fixtures module, which is this repo's existing convention (see e.g. `test_warp.py`,
+    `test_sequence.py`).
+    """
+    keyframes = [Keyframe(dict(ANGLES), None, (0.0, 0.0), 0.0)]
+    for offset, heading, token in zip(offsets, headings, tokens, strict=True):
+        keyframes.append(Keyframe(dict(ANGLES), token, offset, heading))
+    return CombinationRecord(
+        name=name,
+        library_version="v0.2",
+        source=CombinationSource("t", 0, 100, False),
+        keyframes=keyframes,
+        telegraph_ms=180.0 if admitted else None,
+        tracking_error_rad=0.1 if admitted else None,
+        admission="admitted" if admitted else "draft",
+    )
 
 
 @pytest.fixture(scope="module")
@@ -42,21 +82,32 @@ def arena():
 
 
 @pytest.fixture(scope="module")
-def loadout() -> Loadout:
-    return Loadout.load(LOADOUT_DIR / "orthodox.json")
+def library() -> dict[str, CombinationRecord]:
+    return {
+        "combo-a": _combination("combo-a"),
+        "combo-b": _combination("combo-b", offsets=((0.1, 0.0), (0.2, 0.0))),
+    }
 
 
 class _StubGenerator:
-    """Never asked for anything by these tests — the reference stream is lazy."""
+    """A generator stand-in for tests that build a :class:`FighterRuntime` but never step it.
+
+    ``context_qpos`` is the one method the geometry helpers in `fight.py` call even off the physics
+    path (:meth:`FightWorld.to_generator_frame`), so it is real enough to answer that, and nothing
+    else.
+    """
+
+    def context_qpos(self) -> np.ndarray:
+        return np.zeros((1, QPOS_DIM))
 
 
-def _runtime(name: str, arena, loadout) -> FighterRuntime:
-    return FighterRuntime(name, arena, _StubGenerator(), loadout, IdlePilot())
+def _runtime(name: str, arena, library) -> FighterRuntime:
+    return FighterRuntime(name, arena, _StubGenerator(), library, IdlePilot())
 
 
 # --- indices, derived by name ------------------------------------------------------------------------
-def test_a_fighter_finds_all_twenty_nine_joints(arena, loadout) -> None:
-    red = _runtime("red", arena, loadout)
+def test_a_fighter_finds_all_twenty_nine_joints(arena, library) -> None:
+    red = _runtime("red", arena, library)
 
     assert red.joint_qpos.shape == (NUM_JOINTS,)
     assert red.joint_dof.shape == (NUM_JOINTS,)
@@ -64,10 +115,10 @@ def test_a_fighter_finds_all_twenty_nine_joints(arena, loadout) -> None:
     assert red.root_qpos.shape == (7,) and red.root_dof.shape == (6,)
 
 
-def test_the_two_fighters_share_no_index(arena, loadout) -> None:
+def test_the_two_fighters_share_no_index(arena, library) -> None:
     """The failure this guards against is silent: red would be driving blue's legs."""
-    red = _runtime("red", arena, loadout)
-    blue = _runtime("blue", arena, loadout)
+    red = _runtime("red", arena, library)
+    blue = _runtime("blue", arena, library)
 
     for attribute in ("joint_qpos", "joint_dof", "actuators", "root_qpos", "root_dof"):
         overlap = set(getattr(red, attribute).tolist()) & set(getattr(blue, attribute).tolist())
@@ -76,9 +127,9 @@ def test_the_two_fighters_share_no_index(arena, loadout) -> None:
     assert red.pelvis_body != blue.pelvis_body
 
 
-def test_the_indices_cover_the_whole_model(arena, loadout) -> None:
-    red = _runtime("red", arena, loadout)
-    blue = _runtime("blue", arena, loadout)
+def test_the_indices_cover_the_whole_model(arena, library) -> None:
+    red = _runtime("red", arena, library)
+    blue = _runtime("blue", arena, library)
 
     qpos = np.concatenate([f.root_qpos for f in (red, blue)] + [f.joint_qpos for f in (red, blue)])
     assert sorted(qpos.tolist()) == list(range(arena.nq)) == list(range(len(FIGHTERS) * QPOS_DIM))
@@ -87,11 +138,11 @@ def test_the_indices_cover_the_whole_model(arena, loadout) -> None:
     assert sorted(actuators.tolist()) == list(range(arena.nu))
 
 
-def test_joints_are_indexed_in_mujoco_order(arena, loadout) -> None:
+def test_joints_are_indexed_in_mujoco_order(arena, library) -> None:
     """Not merely 29 joints, but *these* 29 in the order every gain array assumes."""
     import mujoco
 
-    red = _runtime("red", arena, loadout)
+    red = _runtime("red", arena, library)
     for position, name in enumerate(G1.mujoco_joint_names):
         joint = mujoco.mj_name2id(arena, mujoco.mjtObj.mjOBJ_JOINT, f"red_{name}")
         assert red.joint_qpos[position] == arena.jnt_qposadr[joint]
@@ -100,19 +151,19 @@ def test_joints_are_indexed_in_mujoco_order(arena, loadout) -> None:
         )
 
 
-def test_an_unknown_fighter_has_no_joints(arena, loadout) -> None:
+def test_an_unknown_fighter_has_no_joints(arena, library) -> None:
     with pytest.raises(FightError, match="is not in the arena"):
-        _runtime("green", arena, loadout)
+        _runtime("green", arena, library)
 
 
-def test_a_fighter_reads_its_own_state_out_of_the_shared_data(arena, loadout) -> None:
+def test_a_fighter_reads_its_own_state_out_of_the_shared_data(arena, library) -> None:
     import mujoco
 
     data = mujoco.MjData(arena)
     reset_to_stance(arena, data, ArenaConfig())
 
-    red = _runtime("red", arena, loadout)
-    blue = _runtime("blue", arena, loadout)
+    red = _runtime("red", arena, library)
+    blue = _runtime("blue", arena, library)
     data.qpos[red.joint_qpos] = np.arange(NUM_JOINTS, dtype=float)
     data.qpos[blue.joint_qpos] = -np.arange(NUM_JOINTS, dtype=float)
 
@@ -122,15 +173,15 @@ def test_a_fighter_reads_its_own_state_out_of_the_shared_data(arena, loadout) ->
     assert red.robot_state(data).base_ang_vel.shape == (3,)
 
 
-def test_the_fighters_start_apart_and_facing_each_other(arena, loadout) -> None:
+def test_the_fighters_start_apart_and_facing_each_other(arena, library) -> None:
     import mujoco
 
     data = mujoco.MjData(arena)
     reset_to_stance(arena, data, ArenaConfig())
     mujoco.mj_forward(arena, data)
 
-    red = _runtime("red", arena, loadout)
-    blue = _runtime("blue", arena, loadout)
+    red = _runtime("red", arena, library)
+    blue = _runtime("blue", arena, library)
     separation = np.linalg.norm(data.xpos[red.pelvis_body][:2] - data.xpos[blue.pelvis_body][:2])
     assert separation == pytest.approx(2 * ArenaConfig().start_separation, abs=0.05)
 
@@ -162,85 +213,114 @@ def test_apply_yaw_wants_a_quaternion() -> None:
         apply_yaw(np.zeros(3))
 
 
-# --- aiming an approach ------------------------------------------------------------------------------
-class _GeometryOnlyWorld:
-    """Just enough of a :class:`FightWorld` for the two methods that are pure geometry.
+# --- the live anchor (spec/intent.md 3.0's "Off-target execution") ----------------------------------
+class _AnchorOnlyWorld:
+    """Just enough of a :class:`FightWorld` to exercise the anchor wiring, no arena, no GPU.
 
-    Both read the pelvis out of the shared ``MjData`` and the generator's buffer tail and nothing
-    else, so they can be exercised without a GPU, a policy or a checkpoint.
+    ``_anchor_now``, ``to_generator_frame``, ``_record_drift`` and ``_intent_at`` all read the
+    pelvis, the root quaternion and the generator's own buffer tail out of ``self`` — nothing else —
+    so they run unmodified against a hand-built stand-in, the same trick `_GeometryOnlyWorld` used
+    before this rewrite for the (now deleted) approach-aiming geometry.
     """
 
-    leg_target = FightWorld.leg_target
-    travel_angle = FightWorld.travel_angle
+    _anchor_now = FightWorld._anchor_now
+    to_generator_frame = FightWorld.to_generator_frame
+    _record_drift = FightWorld._record_drift
+    _intent_at = FightWorld._intent_at
 
-    def __init__(self, pelvis_xy, context_xy=(0.0, 0.0), leg: float = APPROACH_LEG_M) -> None:
-        from types import SimpleNamespace
-
-        self.approach_leg_m = leg
-        self.data = SimpleNamespace(xpos=np.array([[pelvis_xy[0], pelvis_xy[1], 0.79]]))
-        context = np.zeros((1, QPOS_DIM))
-        context[0, 0:2] = context_xy
-        self.fighters = {
-            "red": SimpleNamespace(
-                pelvis_body=0,
-                generator=SimpleNamespace(context_qpos=lambda: context),
-            )
-        }
-
-
-def test_a_far_placement_is_aimed_one_leg_at_a_time() -> None:
-    """The plan is aimed somewhere it can reach; the commit still ends at the placement."""
-    world = _GeometryOnlyWorld(pelvis_xy=(0.0, 0.0), leg=1.0)
-    leg = world.leg_target("red", Placement(position=(3.0, 4.0), heading=0.9))
-    assert np.hypot(*leg.position) == pytest.approx(1.0)          # one leg from the fighter
-    assert leg.position == pytest.approx((0.6, 0.8))              # on the line to the placement
-    assert leg.heading == pytest.approx(0.9)                      # the player's heading, untouched
+    def __init__(self, position: tuple[float, float], heading: float) -> None:
+        quat = np.array([math.cos(heading / 2), 0.0, 0.0, math.sin(heading / 2)])
+        qpos = np.zeros(7)
+        qpos[0:2] = position
+        qpos[3:7] = quat
+        self.data = SimpleNamespace(
+            xpos=np.array([[position[0], position[1], 0.79]]),
+            qpos=qpos,
+        )
+        self._drift_speed_m_s: dict[int, float] = {}
 
 
-def test_the_last_leg_is_the_placement_itself() -> None:
-    world = _GeometryOnlyWorld(pelvis_xy=(1.0, 1.0), leg=1.0)
-    placement = Placement(position=(1.5, 1.0), heading=0.2)
-    assert world.leg_target("red", placement) is placement
+def _fighter_stub(name: str, timeline: IntentTimeline) -> SimpleNamespace:
+    return SimpleNamespace(
+        name=name,
+        timeline=timeline,
+        pelvis_body=0,
+        root_qpos=np.arange(7),
+        apply_yaw=0.0,
+        apply_delta_heading=np.array([1.0, 0.0, 0.0, 0.0]),
+        generator=_StubGenerator(),
+    )
 
 
-def test_a_zero_leg_aims_at_the_whole_distance() -> None:
-    """The knob that restores the pre-2026-08-17 aim, for A/B on the bench."""
-    world = _GeometryOnlyWorld(pelvis_xy=(0.0, 0.0), leg=0.0)
-    placement = Placement(position=(3.0, 4.0), heading=0.0)
-    assert world.leg_target("red", placement) is placement
+def test_the_anchor_reports_the_fighters_live_position_not_the_origin() -> None:
+    """`spec/intent.md` "Off-target execution": a queued combination is re-warped from wherever the
+    fighter *actually* is when it starts, not from wherever it was assumed to be. This is the one
+    piece of geometry `fight.py` contributes to that rule, so it is proven directly: stage a commit,
+    plant the fighter somewhere that is deliberately not the origin, drive one tick, and check the
+    drift speed recorded matches the same formula computed by hand from that live position — not from
+    the origin, and not from the ghost alone.
+    """
+    record = _combination("cross-ring", offsets=((0.3, 0.0), (0.6, 0.0)), tokens=(6, 6))
+    timeline = IntentTimeline({"cross-ring": record}, require_admitted=False)
+    ghost = (3.0, 1.0)
+    timeline.stage(combination="cross-ring", ghost=ghost)
+    timeline.commit(0)
+
+    live_position, live_heading = (1.5, 0.7), 0.3
+    world = _AnchorOnlyWorld(live_position, live_heading)
+    world.fighters = {"red": _fighter_stub("red", timeline)}
+
+    commit_at = timeline.commits[0].issued_at + COMMIT_HORIZON_TICKS
+    world._intent_at(world.fighters["red"], commit_at, bearing=0.0)
+
+    commit = timeline.commits[0]
+    assert commit.commit_at == commit_at, "the commit never started at the tick we drove"
+
+    cos_h, sin_h = math.cos(live_heading), math.sin(live_heading)
+    dx, dy = record.recorded_displacement
+    rotated = (cos_h * dx - sin_h * dy, sin_h * dx + cos_h * dy)
+    residual = (ghost[0] - live_position[0] - rotated[0], ghost[1] - live_position[1] - rotated[1])
+    expected = math.hypot(*residual) / (record.duration_ticks / TICK_HZ)
+
+    recorded = world._drift_speed_m_s[id(commit)]
+    assert recorded == pytest.approx(expected)
+
+    # If the anchor had silently defaulted to the origin instead of the live position, the number
+    # would be different — pin that down explicitly so a regression that zeroes the anchor is caught
+    # by a wrong number rather than merely "some number".
+    origin_residual = (ghost[0] - dx, ghost[1] - dy)
+    origin_drift = math.hypot(*origin_residual) / (record.duration_ticks / TICK_HZ)
+    assert recorded != pytest.approx(origin_drift)
 
 
-def test_travel_points_where_the_fighter_is_going() -> None:
-    """Not where it faces: the difference is what selects a sideways gait upstream."""
-    world = _GeometryOnlyWorld(pelvis_xy=(0.0, 0.0), context_xy=(5.0, 5.0))
-    # A generator-frame target one metre "left" of the buffer tail, while facing straight ahead.
-    angle = world.travel_angle("red", Placement(position=(5.0, 6.0), heading=0.0))
-    assert angle == pytest.approx(np.pi / 2)
+def test_the_anchor_is_not_called_when_nothing_is_starting() -> None:
+    """A tick that neither starts nor advances a commit must not touch the drift table at all."""
+    record = _combination("idle-tick")
+    timeline = IntentTimeline({"idle-tick": record}, require_admitted=False)
 
+    world = _AnchorOnlyWorld((0.0, 0.0), 0.0)
+    world.fighters = {"red": _fighter_stub("red", timeline)}
 
-def test_travel_collapses_onto_the_heading_once_there() -> None:
-    """Inside the arrival radius the direction to the target is noise, and noise flips the gait."""
-    world = _GeometryOnlyWorld(pelvis_xy=(0.0, 0.0), context_xy=(5.0, 5.0))
-    near = Placement(position=(5.0 + ARRIVAL_RADIUS_M / 2, 5.0), heading=1.1)
-    assert world.travel_angle("red", near) == pytest.approx(1.1)
+    world._intent_at(world.fighters["red"], 0, bearing=0.0)
+    assert world._drift_speed_m_s == {}
 
 
 # --- pilots ------------------------------------------------------------------------------------------
-def _timeline(loadout: Loadout) -> IntentTimeline:
-    return IntentTimeline(loadout)
+def _timeline(library) -> IntentTimeline:
+    return IntentTimeline(library)
 
 
-def test_an_idle_pilot_never_commits(loadout) -> None:
-    timeline = _timeline(loadout)
+def test_an_idle_pilot_never_commits(library) -> None:
+    timeline = _timeline(library)
     pilot = IdlePilot()
     for tick in range(50):
         pilot.act(timeline, tick)
     assert timeline.commits == ()
 
 
-def test_a_scripted_pilot_commits_on_its_tick(loadout) -> None:
-    timeline = _timeline(loadout)
-    pilot = ScriptedPilot([(7, "1")])
+def test_a_scripted_pilot_commits_on_its_tick(library) -> None:
+    timeline = _timeline(library)
+    pilot = ScriptedPilot([(7, "combo-a")])
 
     for tick in range(7):
         pilot.act(timeline, tick)
@@ -248,44 +328,47 @@ def test_a_scripted_pilot_commits_on_its_tick(loadout) -> None:
 
     pilot.act(timeline, 7)
     assert len(timeline.commits) == 1
-    assert timeline.commits[0].slot == "1"
+    assert timeline.commits[0].record.name == "combo-a"
     assert timeline.commits[0].issued_at == 7
 
 
-def test_a_scripted_pilot_fires_each_entry_once(loadout) -> None:
-    timeline = _timeline(loadout)
-    pilot = ScriptedPilot([(3, "1")])
+def test_a_scripted_pilot_fires_each_entry_once(library) -> None:
+    timeline = _timeline(library)
+    pilot = ScriptedPilot([(3, "combo-a")])
     for _ in range(4):
         pilot.act(timeline, 3)
     assert len(timeline.commits) == 1
 
 
-def test_a_scripted_placement_is_carried_into_the_commit(loadout) -> None:
-    timeline = _timeline(loadout)
-    placement = Placement(position=(0.4, 0.0), heading=0.2)
-    ScriptedPilot([(1, "2", placement)]).act(timeline, 1)
+def test_a_scripted_ghost_is_carried_into_the_commit(library) -> None:
+    timeline = _timeline(library)
+    ScriptedPilot([(1, "combo-b", (0.4, 0.0))]).act(timeline, 1)
 
-    assert timeline.commits[0].placement == placement
+    assert timeline.commits[0].ghost == (0.4, 0.0)
 
 
-def test_a_script_may_queue_commits_back_to_back(loadout) -> None:
-    """`spec/intent.md` 1.0: a second commit is queued, not refused, and runs when the first ends."""
-    timeline = _timeline(loadout)
-    pilot = ScriptedPilot([(0, "1"), (2, "2")])
+def test_a_scripted_ghost_defaults_to_the_origin_when_omitted(library) -> None:
+    timeline = _timeline(library)
+    ScriptedPilot([(1, "combo-a")]).act(timeline, 1)
+    assert timeline.commits[0].ghost == (0.0, 0.0)
+
+
+def test_a_script_may_queue_commits_back_to_back(library) -> None:
+    """A second commit is queued, not refused, while the first is still outstanding."""
+    timeline = _timeline(library)
+    pilot = ScriptedPilot([(0, "combo-a"), (2, "combo-b")])
     pilot.act(timeline, 0)
     pilot.act(timeline, 2)
 
-    assert len(timeline.commits) == 2
-    assert timeline.commits[1].commit_at == timeline.commits[0].end_tick
+    assert [c.record.name for c in timeline.commits] == ["combo-a", "combo-b"]
+    assert [c.issued_at for c in timeline.commits] == [0, 2]
 
 
-def test_a_script_that_overruns_the_queue_raises(loadout) -> None:
+def test_a_script_that_overruns_the_queue_raises(library) -> None:
     """A script bug, not a dropped input. Silently skipping it would make the match record disagree
     with the script that produced it."""
-    from openroboxing.spec.constants import MAX_OUTSTANDING_COMMITS
-
-    timeline = _timeline(loadout)
-    script = [(tick, "1") for tick in range(MAX_OUTSTANDING_COMMITS + 1)]
+    timeline = _timeline(library)
+    script = [(tick, "combo-a") for tick in range(MAX_OUTSTANDING_COMMITS + 1)]
     pilot = ScriptedPilot(script)
     for tick in range(MAX_OUTSTANDING_COMMITS):
         pilot.act(timeline, tick)
@@ -294,76 +377,101 @@ def test_a_script_that_overruns_the_queue_raises(loadout) -> None:
         pilot.act(timeline, MAX_OUTSTANDING_COMMITS)
 
 
-def test_reset_rearms_a_script_for_the_next_round(loadout) -> None:
-    pilot = ScriptedPilot([(4, "1")])
-    first = _timeline(loadout)
+def test_reset_rearms_a_script_for_the_next_round(library) -> None:
+    pilot = ScriptedPilot([(4, "combo-a")])
+    first = _timeline(library)
     pilot.act(first, 4)
     assert len(first.commits) == 1
 
     pilot.reset()
-    second = _timeline(loadout)
+    second = _timeline(library)
     pilot.act(second, 4)
     assert len(second.commits) == 1, "the script did not fire again in the new round"
 
 
 def test_a_malformed_script_entry_raises() -> None:
-    with pytest.raises(FightError, match=r"\(tick, slot\[, placement\]\)"):
+    with pytest.raises(FightError, match=r"\(tick, combination\[, ghost\]\)"):
         ScriptedPilot([(1,)])
-
-
-# --- the commit log ----------------------------------------------------------------------------------
-def test_a_commit_keeps_the_adjustment_the_player_made(loadout) -> None:
-    """`spec/match_record.md`'s CommitEvent carries it: "jab, nudged 4 degrees" is not recoverable
-    from the resulting angles."""
-    timeline = _timeline(loadout)
-    pose = loadout.resolve("1")
-    joint, bound = next(iter(pose.adjustment_envelope.items()))
-
-    timeline.stage(pose_slot="1", adjustment={joint: bound / 2})
-    commit = timeline.commit(0)
-
-    assert commit.adjustment == {joint: bound / 2}
-    assert commit.pose.joint_angles[joint] == pytest.approx(
-        pose.joint_angles[joint] + bound / 2
-    ), "the pose still carries it baked in"
-
-
-def test_a_commit_with_no_adjustment_records_an_empty_one(loadout) -> None:
-    timeline = _timeline(loadout)
-    timeline.stage(pose_slot="1")
-    assert timeline.commit(0).adjustment == {}
 
 
 # --- the world ----------------------------------------------------------------------------------------
 @pytest.mark.slow
-def test_both_fighters_step_and_stay_in_the_ring(loadout) -> None:
-    """A short run of the real thing: physics, two generators, two policies, one shared step."""
+def test_a_committed_combination_reaches_its_end_tick_and_records_its_drift(library) -> None:
+    """A short combination, driven by a script, runs under physics to its recorded end — and the
+    drift speed its warp implied is visible in the round's commit log, unconditionally
+    (`spec/intent.md` "The achieved drift speed is recorded in the match record").
+    """
     from openroboxing.runtime.contact import ContactTracker, FightTrace
-    from openroboxing.runtime.fight import FightWorld
 
-    world = FightWorld(loadouts={f: loadout for f in FIGHTERS}, match_seed=1234)
+    world = FightWorld(
+        libraries={f: library for f in FIGHTERS},
+        pilots={"red": ScriptedPilot([(0, "combo-a", (0.2, 0.1))])},
+        match_seed=1234,
+    )
     world.reset_round(0)
 
     tracker, trace = ContactTracker(), FightTrace()
-    for tick in range(100):
+    combo = library["combo-a"]
+    ticks = COMMIT_HORIZON_TICKS + combo.duration_ticks + 40  # margin past the commit horizon floor
+    for tick in range(ticks):
         world.step(tick)
         world.observe(tracker, trace, tick)
 
-    assert len(trace.tick) == 100
-    assert world.qpos().shape == (arena_nq(world),)
+    red_events = [e for e in world.commits() if e["fighter"] == "red"]
+    assert len(red_events) == 1
+    event = red_events[0]
 
+    assert event["commit_at"] is not None, "the commit never started"
+    assert event["end_tick"] == event["commit_at"] + combo.duration_ticks
+    assert ticks - 1 >= event["end_tick"], "the run did not go far enough to reach the end tick"
+    assert event["drift_speed_m_s"] is not None
+    assert event["drift_speed_m_s"] >= 0.0
+
+
+@pytest.mark.slow
+def test_both_fighters_run_combinations_without_interfering(library) -> None:
+    """Two fighters, two different combinations, one shared physics step — extends the M3-T4
+    acceptance test past an idle punchbag to a scripted commit each."""
+    from openroboxing.runtime.contact import ContactTracker, FightTrace
+
+    world = FightWorld(
+        libraries={f: library for f in FIGHTERS},
+        pilots={
+            "red": ScriptedPilot([(0, "combo-a", (0.2, 0.1))]),
+            "blue": ScriptedPilot([(0, "combo-b", (-0.2, -0.1))]),
+        },
+        match_seed=1234,
+    )
+    world.reset_round(0)
+
+    tracker, trace = ContactTracker(), FightTrace()
+    longest = max(library["combo-a"].duration_ticks, library["combo-b"].duration_ticks)
+    ticks = COMMIT_HORIZON_TICKS + longest + 40
+    for tick in range(ticks):
+        world.step(tick)
+        world.observe(tracker, trace, tick)
+
+    assert len(trace.tick) == ticks
     half = ArenaConfig().ring_size / 2
     for fighter in FIGHTERS:
         inside = [abs(p[:2]).max() < half for p in trace.positions[fighter]]
         assert all(inside), f"{fighter} left the ring"
         assert min(trace.torso_height_m[fighter]) > 0.4, f"{fighter} fell over standing still"
 
+    events = world.commits()
+    by_fighter = {f: [e["combination"] for e in events if e["fighter"] == f] for f in FIGHTERS}
+    assert by_fighter["red"] == ["combo-a"]
+    assert by_fighter["blue"] == ["combo-b"]
+    assert all(e["drift_speed_m_s"] is not None for e in events), "one fighter's commit was silent"
+
 
 @pytest.mark.slow
-def test_a_round_reset_puts_both_fighters_back(loadout) -> None:
-    from openroboxing.runtime.fight import FightWorld
-
-    world = FightWorld(loadouts={f: loadout for f in FIGHTERS}, match_seed=1234)
+def test_a_round_reset_puts_both_fighters_back(library) -> None:
+    world = FightWorld(
+        libraries={f: library for f in FIGHTERS},
+        pilots={"red": ScriptedPilot([(0, "combo-a", (0.2, 0.1))])},
+        match_seed=1234,
+    )
     world.reset_round(0)
     start = world.qpos()
     for tick in range(20):
@@ -376,10 +484,8 @@ def test_a_round_reset_puts_both_fighters_back(loadout) -> None:
 
 
 @pytest.mark.slow
-def test_stepping_before_a_round_starts_raises(loadout) -> None:
-    from openroboxing.runtime.fight import FightWorld
-
-    world = FightWorld(loadouts={f: loadout for f in FIGHTERS}, match_seed=1234)
+def test_stepping_before_a_round_starts_raises(library) -> None:
+    world = FightWorld(libraries={f: library for f in FIGHTERS}, match_seed=1234)
     with pytest.raises(FightError, match="has not started"):
         world.step(0)
 
