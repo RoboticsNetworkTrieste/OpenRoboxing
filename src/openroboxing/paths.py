@@ -77,6 +77,12 @@ POSE_DIR: Path = OPENROBOXING_ROOT / "poses"
 #: directory, so a loadout filed with the poses is parsed as a malformed pose.
 LOADOUT_DIR: Path = POSE_DIR / "loadouts"
 
+MOTIONS_DIR: Path = REPO_ROOT / "motions"
+"""The mocap corpus: Maya-style CSV exports, one per take. See spec/combination.md."""
+
+COMBINATION_DIR: Path = POSE_DIR / "v0.2/combinations"
+"""Built combination records. Produced by tools/import_motions.py, not authored by hand."""
+
 
 def display_path(path: Path) -> str:
     """How a path should be *named*, not where it happens to sit.

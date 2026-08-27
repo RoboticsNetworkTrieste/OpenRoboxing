@@ -44,6 +44,42 @@ NUM_TIME_TOKENS: int = MAX_TOKENS - MIN_TOKENS + 1
 
 SECONDS_PER_TOKEN: float = NUM_FRAMES_PER_TOKEN / GENERATOR_HZ
 
+# --- Motion combinations (spec/combination.md) ---------------------------------------------------
+MIN_KEYFRAME_GAP_FRAMES: int = MIN_TOKENS * NUM_FRAMES_PER_TOKEN
+"""Closest two keyframes may sit, in corpus frames = 24 = 0.8 s.
+
+Not a taste parameter: `MIN_TOKENS` is the shortest plan MotionBricks can produce, so two keyframes
+closer than this cannot both be in-betweened to. Source: spec/combination.md.
+"""
+
+MAX_LEG_FRAMES: int = MAX_TOKENS * NUM_FRAMES_PER_TOKEN
+"""Longest single leg, in corpus frames = 64 = 2.13 s.
+
+Not a taste parameter either: `MAX_TOKENS` is the longest plan MotionBricks can produce. A recorded
+gap longer than this is *densified* — a keyframe is added at the busiest frame inside it — rather
+than held, so every leg is plannable and no leg invents motion the recording does not contain.
+"""
+
+KEYFRAME_QUANTILE: float = 0.70
+"""How busy a frame must be, against its own take, to be eligible as a keyframe.
+
+The one free parameter of the segmenter, stated rather than buried. A keyframe sits where the body
+is moving faster than it does for 70 % of the take.
+
+**Not a peak-detection threshold**, and deliberately so. Measured 2026-08-27: the shadow-boxing takes
+have real spikes (median 0.106, peak 1.028 rad/frame of salient motion) but the travelling takes are
+uniformly active (median 0.117, peak 0.331), so a "3 sigma above the median" rule admits 120 frames
+from one and **4** from the other, and all four `combat_turn_jog_start` takes — the only motions that
+cross the ring — produce no combination at all. A quantile makes no assumption that the distribution
+is peaked, and covers all 38 takes.
+"""
+
+COMBINATION_MIN_KEYFRAMES: int = 3
+COMBINATION_MAX_KEYFRAMES: int = 6
+"""A combination is 3-6 keyframes. Fewer is not a combination; more runs past the duration the
+no-cancellation rule can survive. Source: the design's decision D1.
+"""
+
 COMMIT_HORIZON_TICKS: int = 30
 """Minimum lead from commit to execution = 0.6 s at 50 Hz. Per-match parameter.
 
