@@ -19,6 +19,10 @@ Conventions
   :data:`~openroboxing.spec.constants.MIN_KEYFRAME_GAP_FRAMES` nor further apart than
   :data:`~openroboxing.spec.constants.MAX_LEG_FRAMES` — the shortest and longest plans MotionBricks
   can produce. The lower bound is enforced by selection, the upper by :func:`densify`.
+- Once a combination's keyframes are fixed, :func:`leg_tokens` converts each gap in frames to a leg
+  length in tokens. Rounding each leg independently would drift by up to half a token per leg, so the
+  rounding residual is carried forward and diffused across the combination, holding the *total*
+  duration within one token of the recording however many legs it has (design D2).
 """
 
 from __future__ import annotations
@@ -33,7 +37,10 @@ from openroboxing.spec.constants import (
     COMBINATION_MIN_KEYFRAMES,
     KEYFRAME_QUANTILE,
     MAX_LEG_FRAMES,
+    MAX_TOKENS,
     MIN_KEYFRAME_GAP_FRAMES,
+    MIN_TOKENS,
+    NUM_FRAMES_PER_TOKEN,
 )
 from openroboxing.studio.harvest import SALIENT_JOINT_SUBSTRINGS
 
@@ -135,3 +142,33 @@ def combination_runs(
     """
     runs = [tuple(indices[i : i + max_len]) for i in range(0, len(indices), max_len)]
     return [run for run in runs if len(run) >= min_len]
+
+
+def leg_tokens(gap_frames: list[int]) -> list[int]:
+    """Token count per leg, with the rounding residual diffused across the combination.
+
+    Rounding each leg independently drifts by up to half a token per leg. Carrying the residual
+    forward holds the total inside one token however many legs there are, which is what
+    "motions last the same time" means in practice (design D2).
+
+    Raises:
+        SegmentError: if a gap cannot be planned. Nothing is clamped (`CLAUDE.md` invariant 5).
+    """
+    tokens: list[int] = []
+    residual = 0.0
+    for gap in gap_frames:
+        if gap < MIN_TOKENS * NUM_FRAMES_PER_TOKEN:
+            raise SegmentError(
+                f"leg of {gap} frames is shorter than the planner's minimum "
+                f"{MIN_TOKENS * NUM_FRAMES_PER_TOKEN}"
+            )
+        if gap > MAX_LEG_FRAMES:
+            raise SegmentError(
+                f"leg of {gap} frames is longer than the planner's maximum {MAX_LEG_FRAMES}; "
+                "keyframe_indices densifies gaps, so reaching this means it was bypassed"
+            )
+        exact = gap / NUM_FRAMES_PER_TOKEN + residual
+        chosen = max(MIN_TOKENS, min(MAX_TOKENS, round(exact)))
+        residual = exact - chosen
+        tokens.append(chosen)
+    return tokens

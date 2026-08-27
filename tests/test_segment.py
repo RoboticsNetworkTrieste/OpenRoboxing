@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from openroboxing.paths import MOTIONS_DIR
-from openroboxing.spec.constants import MAX_LEG_FRAMES, MIN_KEYFRAME_GAP_FRAMES, QPOS_DIM
+from openroboxing.spec.constants import (
+    MAX_LEG_FRAMES,
+    MAX_TOKENS,
+    MIN_KEYFRAME_GAP_FRAMES,
+    MIN_TOKENS,
+    NUM_FRAMES_PER_TOKEN,
+    QPOS_DIM,
+)
 from openroboxing.studio import motion_import, segment
 
 TAKE = MOTIONS_DIR / "ib_dodge_up_R_001__A437.csv"
@@ -62,3 +70,48 @@ def test_combination_runs_are_bounded_and_ordered():
         assert 3 <= len(run) <= 6
         assert list(run) == sorted(run)
     assert sum(len(r) for r in runs) <= len(indices)
+
+
+def test_leg_tokens_are_within_the_planner_bounds():
+    tokens = segment.leg_tokens([24, 40, 64, 30])
+    assert all(MIN_TOKENS <= n <= MAX_TOKENS for n in tokens)
+
+
+def test_leg_tokens_hold_total_duration_within_one_token():
+    gaps = [26, 27, 26, 27, 26, 27, 26]  # each 6.5 tokens: independent rounding drifts
+    tokens = segment.leg_tokens(gaps)
+    error_frames = abs(sum(tokens) * NUM_FRAMES_PER_TOKEN - sum(gaps))
+    assert error_frames <= NUM_FRAMES_PER_TOKEN
+
+
+def test_leg_tokens_rejects_a_gap_below_the_minimum():
+    with pytest.raises(segment.SegmentError, match="shorter than"):
+        segment.leg_tokens([10])
+
+
+def test_leg_tokens_rejects_a_gap_above_the_maximum():
+    with pytest.raises(segment.SegmentError, match="longer than"):
+        segment.leg_tokens([MAX_LEG_FRAMES + 1])
+
+
+def test_every_take_tokenises():
+    """Densification's payoff: every recorded gap tokenises with no special cases."""
+    import itertools
+
+    for path in sorted(MOTIONS_DIR.glob("*.csv")):
+        qpos = motion_import.load_take(path)
+        for run in segment.combination_runs(segment.keyframe_indices(qpos)):
+            gaps = [b - a for a, b in itertools.pairwise(run)]
+            assert len(segment.leg_tokens(gaps)) == len(gaps)
+
+
+def test_whole_library_duration_error_stays_within_one_token():
+    """The owner's requirement, measured across every combination rather than asserted once."""
+    import itertools
+
+    for path in sorted(MOTIONS_DIR.glob("*.csv")):
+        qpos = motion_import.load_take(path)
+        for run in segment.combination_runs(segment.keyframe_indices(qpos)):
+            gaps = [b - a for a, b in itertools.pairwise(run)]
+            planned = sum(segment.leg_tokens(gaps)) * NUM_FRAMES_PER_TOKEN
+            assert abs(planned - sum(gaps)) <= NUM_FRAMES_PER_TOKEN, path.name
