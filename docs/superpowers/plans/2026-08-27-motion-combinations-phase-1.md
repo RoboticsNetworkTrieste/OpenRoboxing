@@ -319,7 +319,14 @@ def joint_permutation(
     index = {name: i for i, name in enumerate(joint_names)}
     missing = [n for n in conventions.mujoco_joint_names if n not in index]
     if missing:
-        raise MotionImportError(f"corpus has no column for MuJoCo joints {missing}")
+        # Name the offending *corpus* column too, not just the MuJoCo joint it failed to supply:
+        # when a corpus is wrong it is the unrecognised column that says why.
+        mujoco_names = set(conventions.mujoco_joint_names)
+        unrecognised = [n for n in joint_names if n not in mujoco_names]
+        raise MotionImportError(
+            f"corpus has no column for MuJoCo joints {missing}; "
+            f"unrecognised corpus columns: {unrecognised}"
+        )
     perm = np.array([index[n] for n in conventions.mujoco_joint_names], dtype=int)
     if not np.array_equal(perm[invert(perm)], np.arange(len(perm))):
         raise MotionImportError("joint permutation is not invertible")
