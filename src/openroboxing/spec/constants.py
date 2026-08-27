@@ -114,6 +114,25 @@ the number a client uses to tell a player how long a placement will cost them, a
 APPROACH_TIMEOUT_TICKS is derived from.
 """
 
+DRIFT_GAIN: float = 0.803
+"""Fraction of a commanded drift the generator actually covers, measured not assumed.
+
+A warped combination aims each leg at a target position; MotionBricks converges toward it but
+arrives short by a near-constant fraction, so `runtime/warp.py` divides the residual by this to
+land on the ghost. Measured 2026-08-28 over 9 combinations (3 per family) at 0.25-2.0 m drift, 36
+(combination, distance) pairs: median 0.803, range 0.723-0.839. See docs/perf/2026-08-28-drift-gain.md.
+
+Measured as an *incremental* gain — `(reached_at_drift - reached_at_zero_drift) / drift` — not as
+total-displacement coverage. The first pass measured the latter and found the fraction varied by
+family from 0.720 to 0.820 (outside the +/-0.10 bar this constant is held to); that turned out to be
+an artefact of `ib-combat-turn-jog` combinations carrying up to 0.89 m of their own recorded travel,
+which dominated the denominator and was never touched by this gain in the first place. Isolating the
+residual's own coverage collapses the family spread to 0.786-0.811, comfortably inside the bar.
+
+The old open-ended approach hid this by walking until it arrived; `spec/intent.md` 3.0 removes that,
+so the correction has to be explicit. Re-measure after any submodule bump.
+"""
+
 ARRIVAL_RADIUS_M: float = 0.40
 """How near a placement counts as arrived, ending a commit's approach phase and throwing the pose.
 
