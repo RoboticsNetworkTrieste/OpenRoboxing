@@ -5,7 +5,12 @@ Implements decisions D3, D4 and D5 of
 
 A combination **starts in place** — the fighter does not travel to a start — and its **final
 keyframe lands on the ghost**. Between them the recorded footwork is kept at **true size** and the
-leftover travel is added as an even drift.
+leftover travel (the residual) is added as an even drift, ramped by elapsed time.
+
+MotionBricks only covers ``DRIFT_GAIN`` of a commanded residual (measured, M6-T1), so the residual
+is divided by it before the ramp — asking for more so the fighter actually lands on the ghost. The
+recorded footwork is **not** gained: it is already the right size (design D4), and gaining it too
+would re-introduce exactly the distortion D4 exists to prevent.
 
 Why not scale the recorded path proportionally: measured 2026-08-27, reaching a ghost 2 m away needs
 0.6-2.1x for the travelling takes but **30-141x** for shadow boxing, whose combinations travel
@@ -21,7 +26,9 @@ Conventions
 - ``facing_angle`` is where the fighter looks and comes from the **recording**. ``movement_angle`` is
   where it travels and comes from the **warped** displacement. They are different signals and the
   difference selects the gait (`CLAUDE.md`).
-- Nothing is clamped. A ghost the combination cannot reach in its recorded duration raises.
+- Nothing is clamped. With a ``speed_ceiling`` set, a ghost the combination cannot reach in its
+  recorded duration raises; with ``speed_ceiling=None`` there is no ceiling and no raise, and the
+  fighter runs whatever drift landing on the ghost takes (owner, 2026-08-28).
 """
 
 from __future__ import annotations
@@ -32,7 +39,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
-from openroboxing.spec.constants import APPROACH_SPEED_M_S, SECONDS_PER_TOKEN
+from openroboxing.spec.constants import APPROACH_SPEED_M_S, DRIFT_GAIN, SECONDS_PER_TOKEN
 
 if TYPE_CHECKING:  # `runtime` does not import `studio` at runtime - see generator.py's note.
     from openroboxing.studio.combination_record import CombinationRecord
@@ -64,7 +71,7 @@ def warp(
     anchor_heading: float,
     ghost_position: tuple[float, float],
     *,
-    speed_ceiling: float = APPROACH_SPEED_M_S,
+    speed_ceiling: float | None = APPROACH_SPEED_M_S,
 ) -> list[Leg]:
     """Place ``record``: start at the anchor, end on the ghost, footwork at recorded size.
 
@@ -73,13 +80,19 @@ def warp(
         anchor_position: where the fighter is now, MuJoCo world ``(x, y)``.
         anchor_heading: where the fighter faces now, radians.
         ghost_position: where the final keyframe must land.
-        speed_ceiling: the fastest sustained drift the fighter can hold, m/s.
+        speed_ceiling: the fastest sustained drift the fighter can hold, m/s, checked against the
+            *raw* residual (before the drift-gain correction, which is not distance the player
+            asked for). ``None`` skips the check entirely: execution re-warps from wherever the
+            fighter actually is and must still reach the ghost, running whatever drift that takes
+            (owner, 2026-08-28). Issue-time validation of a player's placement should pass the
+            default; execution should pass ``None``.
 
     Returns:
         One :class:`Leg` per keyframe after the first, in order.
 
     Raises:
-        WarpError: if reaching the ghost within the recorded duration exceeds ``speed_ceiling``.
+        WarpError: if ``speed_ceiling`` is set and reaching the ghost within the recorded duration,
+            at the raw (un-gained) residual, exceeds it.
     """
     keyframes = record.keyframes
     cos_h, sin_h = math.cos(anchor_heading), math.sin(anchor_heading)
@@ -103,12 +116,18 @@ def warp(
         ghost_position[1] - anchor_position[1] - rotated[-1][1],
     )
     duration_s = total * SECONDS_PER_TOKEN
-    drift_speed = math.hypot(*residual) / duration_s
-    if drift_speed > speed_ceiling:
-        raise WarpError(
-            f"{record.name}: reaching that placement needs {drift_speed:.2f} m/s of drift over "
-            f"{duration_s:.2f} s, above the {speed_ceiling:.2f} m/s ceiling"
-        )
+    if speed_ceiling is not None:
+        drift_speed = math.hypot(*residual) / duration_s
+        if drift_speed > speed_ceiling:
+            raise WarpError(
+                f"{record.name}: reaching that placement needs {drift_speed:.2f} m/s of drift over "
+                f"{duration_s:.2f} s, above the {speed_ceiling:.2f} m/s ceiling"
+            )
+
+    # The generator only covers DRIFT_GAIN of a commanded residual, so ask for more. Checked against
+    # the ceiling *before* this: the gain corrects the generator's shortfall, not extra distance the
+    # player asked for.
+    residual = (residual[0] / DRIFT_GAIN, residual[1] / DRIFT_GAIN)
 
     positions: list[tuple[float, float]] = []
     for offset, time in zip(rotated, elapsed, strict=True):
