@@ -95,10 +95,28 @@ target would discard the turn that *is* the motion. It also lands on the trap `C
 `facing_angle` is where the fighter looks, `movement_angle` is where it travels, and here they
 genuinely differ, per leg.
 
-### D6 — the loadout stays at six slots
+### D6 — there is no loadout; every combination is selectable, nine at a time
 
-Six slots selecting from ~120 combinations. Unchanged: no cancellation,
-`MAX_OUTSTANDING_COMMITS`, `OPENING_STANCE_CONTEXT`.
+**Revised 2026-08-27 by the owner**, replacing "six slots chosen from ~120".
+
+A fighter carries the **whole library**. The client shows **nine moves at a time** in a grid, with a
+forward and a back button paging through all ~120 — fourteen pages at nine per page. Keys 1–9 select
+within the current page.
+
+This deletes `Loadout` rather than repurposing it. What goes with it:
+
+- the six-slot format constraint, and the deckbuilding choice of which six to bring;
+- the per-seat `loadout` and `horizons` maps in the `welcome` message (`server/protocol.py:93`) —
+  the library is now shared and identical for both fighters, so it is sent once, or served as a
+  static asset;
+- `server/agent.py`'s slot learning (`:172-183`), which infers a stance slot and strike slots from
+  the loadout it was dealt, and now has to choose from the library instead.
+
+Unchanged: **no cancellation**, `MAX_OUTSTANDING_COMMITS`, `OPENING_STANCE_CONTEXT`.
+
+The consequence worth stating plainly: both fighters now have identical and complete access to every
+move, so what separates them is what they choose in the moment and where they place it, not what they
+brought. The format's asymmetry moves from preparation to play.
 
 ---
 
@@ -240,18 +258,22 @@ expected and is the gate working.
 
 ### What happens to the v0.1 pose library
 
-`poses/v0.1/` and `poses/loadouts/orthodox.json` are **not deleted**. A `Loadout`'s slots come to
-hold `CombinationRecord`s instead of `PoseRecord`s, so `orthodox.json` is replaced by a v0.2 loadout
-built from admitted combinations, and the v0.1 records stay as the fixtures the pose-level tests and
-the golden library already depend on. Nothing in the runtime reads them once the v0.2 loadout is in
-place.
+`poses/v0.1/` stays as the fixtures the pose-level tests and the golden library already depend on;
+nothing in the runtime reads them once combinations are selectable. `poses/loadouts/orthodox.json`
+and the `Loadout` class go with D6 — there is no loadout to migrate, because the library *is* the
+move set.
 
 ### Client and protocol
 
-`welcome` sends, per slot: combination name, duration in seconds, the final keyframe's pose (for the
-ghost) and `recorded_heading_delta`. The ghost renders at the derived heading and the player drags
-position only. Placements whose drift speed exceeds the ceiling render as rejected, because commit
-will reject them.
+The client holds the whole library and shows **nine moves per page** with forward/back paging
+(D6). Each entry needs its name, duration in seconds, the final keyframe's pose (for the ghost) and
+`recorded_heading_delta` — sent once at `welcome` rather than per seat, since both fighters see the
+same library.
+
+The ghost renders at the derived heading and the player drags position only. Placements whose drift
+speed exceeds the ceiling render as rejected, because commit will reject them — and because a move's
+reach depends on its own recorded duration, that rejection boundary **differs per move** and moves as
+the player pages.
 
 ---
 
