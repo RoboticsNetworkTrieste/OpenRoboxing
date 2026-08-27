@@ -303,3 +303,42 @@ def test_the_studio_may_use_an_unadmitted_combination() -> None:
 def test_an_empty_library_is_rejected() -> None:
     with pytest.raises(IntentError, match="empty"):
         IntentTimeline({})
+
+
+def test_at_most_one_commit_executes_at_a_time() -> None:
+    """Ported from 2.2. Two moves running at once would drive one fighter from two intents.
+
+    The hand-over test above proves there is no *gap* between queued moves; this proves there is no
+    *overlap*. They are different failures and the queue has to avoid both.
+    """
+    timeline = _timeline()
+    timeline.stage(combination="combo-a", ghost=(1.0, 0.0))
+    first = timeline.commit(now=0)
+    timeline.stage(combination="combo-b", ghost=(0.5, 0.0))
+    second = timeline.commit(now=1)
+
+    anchor = _anchor()
+    for tick in range(400):
+        timeline.generator_intent(tick, anchor=anchor)
+        executing = [c for c in (first, second) if c.is_executing(tick)]
+        assert len(executing) <= 1, f"tick {tick}: {len(executing)} commits executing at once"
+
+
+def test_a_queued_commit_cannot_be_taken_back() -> None:
+    """No cancellation, of anything, including a queued move. That rule is the game.
+
+    Ported from 2.2: the timeline exposes no way to remove or replace a commit, and the only thing
+    that frees a queue slot is a move finishing.
+    """
+    timeline = _timeline()
+    timeline.stage(combination="combo-a", ghost=(1.0, 0.0))
+    timeline.commit(now=0)
+
+    assert not any(
+        hasattr(timeline, name) for name in ("cancel", "remove", "clear_commits", "replace")
+    ), "the timeline grew a way to take a commit back"
+
+    # Restaging cannot reach a queued commit either.
+    timeline.stage(combination="combo-b", ghost=(9.0, 9.0))
+    assert timeline.commits[0].record.name == "combo-a"
+    assert timeline.commits[0].ghost == (1.0, 0.0)
