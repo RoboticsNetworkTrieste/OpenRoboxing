@@ -67,12 +67,14 @@ Violating any of these is a design regression, not a shortcut:
 | Generator | **30 Hz** | MotionBricks native output; resampled 30→50 Hz in the bridge |
 | Intent queue service | **30 Hz** | server-side queue processing |
 | Ring stream to clients | **30 FPS** | display only |
-| Commit horizon (default) | **30 ticks = 0.6 s** | per-match parameter |
-| Plan length | **the model's choice**, inside the clip's `allowed_pred_num_tokens` | `walk` allows 6–11 tokens ≈ 0.8–1.5 s |
-| Approach length | **open-ended** | a commit walks until it arrives — `spec/intent.md` 1.1 |
-| Approach leg | **1.0 m** | how far ahead the generator is aimed; also the only speed command |
-| Move end | **when the body settles** | not a counted dwell — `spec/intent.md` 2.2 |
-| Sustained walk | **0.83 m/s** | measured; a commit is typically 3–5 s all in |
+| Commit horizon (default) | **30 ticks = 0.6 s** | per-match parameter; a floor, not a gap between queued moves |
+| Plan length | **the leg's recorded duration**, 6–16 tokens | forced since `spec/intent.md` 3.0 — a combination lasts as long as its recording |
+| Combination style | **`walk_boxing`** | the only clip allowing 6–16 tokens; `walk` caps at 11 |
+| Leg | **0.8–2.13 s** | `MIN_TOKENS`–`MAX_TOKENS` × 4 frames at 30 Hz |
+| Combination | **3–6 keyframes, 1.9–8.0 s** | measured over the 120-record v0.2 library |
+| Move end | **`commit_at + duration_ticks`** | known when it starts — `spec/intent.md` 3.0 |
+| Drift gain | **0.803** | the generator covers this fraction of a commanded residual; `warp.py` divides by it |
+| Sustained walk | **0.83 m/s** | measured; validates a player's placement at issue time only |
 
 ---
 
@@ -92,7 +94,8 @@ src/openroboxing/
   spec/          versioned schemas + rates.md + constants.py + the upstream registry
   parity/        observation parity harness vs the C++ reference (M1)
   runtime/
-    intents.py   timeline, commit queue, loadout resolution
+    intents.py   timeline and commit queue; a commit is a combination (spec/intent.md 3.0)
+    sequence.py  CombinationRunner: which leg is live at a tick, and its intent (M6)
     generator.py MotionBricks wrapper: intents -> qpos @30 Hz, and P0 installed at runtime
     reference.py the reference stream, and THE COMMITTED-PLAN RULE (one implementation only)
     bridge.py    qpos -> policy inputs: name-derived remap, 30->50 Hz, velocities
@@ -236,6 +239,10 @@ history: `src/openroboxing/spec/upstream_patches.md`.
 - **Being hit is out of distribution** for the upstream policy — it was trained penalising contact
   outside feet, hands and elbows. Expect odd behaviour on impact; that is a research track, not a bug
   to patch in the runtime.
+- **The walk approach is gone** (`spec/intent.md` 3.0). A commit no longer travels to a placement:
+  it starts where the fighter stands and its recorded motion carries it to the ghost. `TRAVEL_CONTEXT`,
+  `has_arrived`, `has_settled`, the counted dwell and `approach_timeout_ticks` no longer exist. If you
+  are reading older prose that describes a fighter walking to a placement, it predates 3.0.
 - **Only one boxing clip exists** in the public `CLIPS` registry. Strikes come from authored key
   poses, not from clips — and a fighter **travels in `walk`**, not in that boxing clip. Upstream's
   lateral gaits (`walk_left`/`walk_right`) are swapped in only when the mode is `slow_walk` or
