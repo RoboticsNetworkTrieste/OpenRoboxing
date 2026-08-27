@@ -109,3 +109,70 @@ def test_load_rejects_an_unknown_schema_version(tmp_path):
     path.write_text(json.dumps(data))
     with pytest.raises(cr.CombinationError, match="schema_version"):
         cr.load(path)
+
+
+import numpy as np
+
+from openroboxing.paths import MOTIONS_DIR
+from openroboxing.spec.constants import NUM_FRAMES_PER_TOKEN
+from openroboxing.studio import motion_import
+
+TAKE = MOTIONS_DIR / "ib_dodge_up_R_001__A437.csv"
+
+
+def test_build_from_take_produces_valid_records():
+    qpos = motion_import.load_take(TAKE)
+    records = cr.build_from_take(TAKE.stem, qpos, library_version="v0.2")
+    assert records
+    for record in records:
+        assert record.admission == "draft"
+        assert record.telegraph_ms is None
+        assert record.tracking_error_rad is None
+        assert record.keyframes[0].root_offset == (0.0, 0.0)
+        assert record.keyframes[0].heading_offset == 0.0
+
+
+def test_offsets_are_relative_to_the_first_keyframe():
+    qpos = motion_import.load_take(TAKE)
+    record = cr.build_from_take(TAKE.stem, qpos, library_version="v0.2")[0]
+    start, end = record.source.start_frame, record.source.end_frame
+    expected = (qpos[end, 0] - qpos[start, 0], qpos[end, 1] - qpos[start, 1])
+    assert np.allclose(record.recorded_displacement, expected, atol=1e-9)
+
+
+def test_heading_delta_is_wrapped():
+    """The corpus turns up to 267 degrees; an unwrapped delta would leave the branch."""
+    for path in sorted(MOTIONS_DIR.glob("*.csv")):
+        qpos = motion_import.load_take(path)
+        for record in cr.build_from_take(path.stem, qpos, library_version="v0.2"):
+            for keyframe in record.keyframes:
+                assert -np.pi < keyframe.heading_offset <= np.pi
+
+
+def test_duration_matches_the_recording_within_one_token():
+    qpos = motion_import.load_take(TAKE)
+    for record in cr.build_from_take(TAKE.stem, qpos, library_version="v0.2"):
+        recorded = record.source.end_frame - record.source.start_frame
+        planned = sum(k.leg_tokens or 0 for k in record.keyframes) * NUM_FRAMES_PER_TOKEN
+        assert abs(planned - recorded) <= NUM_FRAMES_PER_TOKEN
+
+
+def test_names_are_unique_within_a_take():
+    qpos = motion_import.load_take(TAKE)
+    names = [r.name for r in cr.build_from_take(TAKE.stem, qpos, library_version="v0.2")]
+    assert len(names) == len(set(names))
+
+
+def test_mirrored_is_taken_from_the_take_name():
+    qpos = motion_import.load_take(MOTIONS_DIR / "ib_dodge_up_R_001__A437_M.csv")
+    records = cr.build_from_take("ib_dodge_up_R_001__A437_M", qpos, library_version="v0.2")
+    assert all(r.source.mirrored for r in records)
+
+
+def test_keyframe_angles_are_the_recorded_frame():
+    qpos = motion_import.load_take(TAKE)
+    record = cr.build_from_take(TAKE.stem, qpos, library_version="v0.2")[0]
+    frame = record.source.start_frame
+    angles = record.keyframes[0].joint_angles
+    for i, name in enumerate(G1.mujoco_joint_names):
+        assert angles[name] == qpos[frame, 7 + i]

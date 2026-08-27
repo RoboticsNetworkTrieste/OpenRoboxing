@@ -15,10 +15,14 @@ Conventions
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from openroboxing.runtime.conventions import G1, G1Conventions
 from openroboxing.spec.constants import (
@@ -29,6 +33,7 @@ from openroboxing.spec.constants import (
     SECONDS_PER_TOKEN,
     TICK_HZ,
 )
+from openroboxing.studio import segment
 from openroboxing.studio.pose_record import ADMISSION_STATES
 
 SCHEMA_VERSION = "0.1"
@@ -217,3 +222,86 @@ def save(record: CombinationRecord, path: Path) -> None:
     with open(path, "w") as handle:
         json.dump(record.to_dict(), handle, indent=2, sort_keys=True)
         handle.write("\n")
+
+
+def _heading(qpos_row: np.ndarray) -> float:
+    """Heading in radians from a MuJoCo ``wxyz`` root quaternion: rotation about world Z."""
+    w, x, y, z = qpos_row[3:7]
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def _wrap(angle: float) -> float:
+    """Wrap an angle to (-pi, pi]."""
+    return -((-angle + math.pi) % (2.0 * math.pi) - math.pi)
+
+
+def _slug(take: str, index: int) -> str:
+    """A kebab-case name unique within a take."""
+    stem = take.lower().replace("_", "-")
+    while "--" in stem:
+        stem = stem.replace("--", "-")
+    return f"{stem.strip('-')}-{index:02d}"
+
+
+def build_from_take(
+    take_name: str,
+    qpos: np.ndarray,
+    *,
+    library_version: str,
+    conventions: G1Conventions = G1,
+) -> list[CombinationRecord]:
+    """Segment a take and assemble one draft record per combination.
+
+    Args:
+        take_name: the take's stem, used for provenance and for naming.
+        qpos: ``(N, 36)`` MuJoCo qpos at ``GENERATOR_HZ``, from ``motion_import.load_take``.
+
+    Every leg is plannable by construction: :func:`segment.keyframe_indices` densifies any gap too
+    long for one plan, so there is no splitting and no repeated keyframe here. A run whose legs
+    cannot be tokenised raises rather than being dropped, because a silently skipped combination is a
+    silently smaller library (`CLAUDE.md` invariant 5).
+    """
+    indices = segment.keyframe_indices(qpos, conventions=conventions)
+    records: list[CombinationRecord] = []
+    for position, run in enumerate(segment.combination_runs(indices)):
+        origin = int(run[0])
+        base_position = qpos[origin, 0:2]
+        base_heading = _heading(qpos[origin])
+        tokens = segment.leg_tokens([int(b) - int(a) for a, b in pairwise(run)])
+        keyframes = [
+            Keyframe(
+                joint_angles=dict(zip(conventions.mujoco_joint_names, qpos[origin, 7:].tolist())),
+                leg_tokens=None,
+                root_offset=(0.0, 0.0),
+                heading_offset=0.0,
+            )
+        ]
+        for frame, leg in zip(run[1:], tokens, strict=True):
+            keyframes.append(
+                Keyframe(
+                    joint_angles=dict(
+                        zip(conventions.mujoco_joint_names, qpos[int(frame), 7:].tolist())
+                    ),
+                    leg_tokens=leg,
+                    root_offset=(
+                        float(qpos[int(frame), 0] - base_position[0]),
+                        float(qpos[int(frame), 1] - base_position[1]),
+                    ),
+                    heading_offset=_wrap(_heading(qpos[int(frame)]) - base_heading),
+                )
+            )
+        records.append(
+            CombinationRecord(
+                name=_slug(take_name, position),
+                library_version=library_version,
+                source=CombinationSource(
+                    take=take_name,
+                    start_frame=origin,
+                    end_frame=int(run[-1]),
+                    mirrored=take_name.endswith("_M"),
+                ),
+                keyframes=keyframes,
+                conventions=conventions,
+            )
+        )
+    return records
