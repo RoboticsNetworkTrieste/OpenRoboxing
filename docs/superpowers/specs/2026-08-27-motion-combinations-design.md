@@ -29,13 +29,30 @@ timed *sequence* of poses, and the sequence should last as long as the recording
 | Rate | **30 fps** = `GENERATOR_HZ` | see below |
 | Take length | 411–1485 frames = **13.7–49.5 s** | measured |
 
-**The corpus is MotionBricks' own training data.** Upstream's `walk_boxing` clip is
+**The corpus shares MotionBricks' training-set naming.** Upstream's `walk_boxing` clip is
 `clip_id: "shadow_boxing_R_003__A360_M"` (`demo/clips.py:153`), resolved by matching the training
-set's `meta['original_path']` (`clips.py:25`). That file is in `motions/`. Two consequences:
+set's `meta['original_path']` (`clips.py:25`), and that name is a file in `motions/`.
 
-1. the takes are **in-distribution** for the generator;
-2. `shadow_boxing_R_003__A360_M.csv` is a **golden fixture** — our conversion must reproduce the clip
-   upstream loads itself, which is what pins the unknown Euler convention.
+**Corrected 2026-08-27 — same name, different data.** Upstream's preprocessed clip cache
+(`motionbricks/out/G1-clip.ckpt`) stores 10 frames of `mujoco_qpos` for that clip. Compared against
+our take, the **elbows have opposite signs** (ours +48.9°, upstream −34.5°) and the knees differ by
+2.7×; the best 10-frame alignment anywhere in the 1254-frame take still has a worst-joint error of
+**22.9°**. Upstream's stored clip is a different retarget of the same capture, not the file itself.
+
+Two consequences, replacing what this section originally claimed:
+
+1. **"in-distribution" is plausible but unverified.** The naming says the captures come from the same
+   corpus; the retarget differs, so how the generator responds is a question for the Task 12 spike,
+   not something the file names settle.
+2. **There is no upstream golden fixture.** The conversion is instead validated against the *robot*:
+   every joint value in all 38 takes falls inside the G1's own `jnt_range` from
+   `paths.G1_29DOF_SIM_XML` — measured, zero violations. That is a strong check, because a flipped
+   sign convention would drive knees or elbows out of range somewhere in ~30 000 frames, and none do.
+   It is what establishes that the corpus is already in the robot's joint convention.
+
+The Euler convention was pinned separately and by its own measurement — see
+`tools/pin_euler_order.py` and `EULER_ORDER` in `studio/motion_import.py`. It affects the root
+quaternion only, never the joint angles.
 
 ### The takes are not moves
 
@@ -282,7 +299,8 @@ the player pages.
 | Test | What it protects |
 |---|---|
 | CSV → qpos → CSV round trip | the conversion (`CLAUDE.md`: most bugs here are convention bugs) |
-| **golden**: our `shadow_boxing_R_003__A360_M` vs upstream's loaded `walk_boxing` | the Euler order, and that we read the corpus the way upstream does |
+| **joint-limit conformance**: every value of all 38 takes inside the G1's `jnt_range` | that the corpus is in the robot's joint convention — replaces the upstream golden, which the data disproved |
+| `pin_euler_order` recovers exactly one convention | that the Euler order is measured, not assumed |
 | `remap(unremap(x)) == x` on the joint permutation | invariant 4 |
 | warp: zero recorded travel, 180° heading delta, ghost at the fighter's own position | D4's degenerate cases |
 | warp: legs of unequal length ramp at constant speed | the time-vs-index ramp |

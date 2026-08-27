@@ -40,6 +40,21 @@ ROOT_COLUMNS = (
 #: Centimetres to metres. The corpus writes pelvis height as 50-107, which is centimetres.
 CM_TO_M = 0.01
 
+#: How ``root_rotate{X,Y,Z}`` compose, in scipy's spelling: lower case is extrinsic, so the Z
+#: rotation is applied last in world.
+#:
+#: **Measured, not assumed** — see ``tools/pin_euler_order.py``. Determined 2026-08-27 as the unique
+#: convention whose recovered yaw *is* the corpus's own heading channel ``root_rotateZ``, to 0.00
+#: degrees over all 38 takes; every other candidate deviates by 2.1-2.9 degrees. ``"ZYX"`` scores
+#: identically because it is the same rotation spelled intrinsically.
+#:
+#: It agrees with the corpus's provenance: Maya's default rotate order XYZ composes as
+#: ``Rz . Ry . Rx``, which is exactly scipy's extrinsic ``"xyz"``.
+#:
+#: This affects the root quaternion only, never the joint angles. Re-run the tool if the corpus is
+#: replaced.
+EULER_ORDER = "xyz"
+
 #: Value columns per row once ``Frame`` is dropped: 6 root + 29 joints. Not ``QPOS_DIM``, which is
 #: 36 because a qpos carries a 4-component quaternion where the corpus carries 3 Euler angles.
 CORPUS_COLUMNS = len(ROOT_COLUMNS) + G1.num_joints
