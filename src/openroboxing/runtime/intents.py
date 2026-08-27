@@ -1,111 +1,136 @@
-"""The intent timeline: staging, committing, and the commit queue (M2-T4, remodelled).
+"""The intent timeline: staging, committing, and the commit queue (M2-T4; rewritten M6-T5).
 
-Implements ``spec/intent.md`` v2.2 (:data:`SPEC_VERSION`).
+Implements ``spec/intent.md`` v3.0 (:data:`SPEC_VERSION`).
 
 The player is always steering a :class:`StagedIntent` — channels edited continuously while the fight
 runs, with no pause and no edit mode. Committing freezes whatever is staged at that instant into a
 :class:`Commit` and appends it to the queue, and from then on it is out of the player's hands:
 **no cancellation, of anything.** That rule is the game, and it is enforced here rather than in the
-UI, because a client cannot be trusted to enforce it.
+UI, because a client cannot be trusted to enforce it. None of that changed at 3.0.
 
-A commit is a plan, not a punch
--------------------------------
-Since 1.0 a commit carries **a placement and a final pose**: *go here, arrive like this*. The
-generator in-betweens from wherever the fighter actually is to that target, so walking is the first
-half of every move rather than a separate control. Up to
-:data:`~openroboxing.spec.constants.MAX_OUTSTANDING_COMMITS` may be unfinished at once and they run
-back to back.
+A commit is a combination, not a plan to walk somewhere
+---------------------------------------------------------
+1.0 through 2.2 built a commit out of *a placement and a final pose*: the generator walked the
+fighter to the placement and arrived in the pose, and roughly a third of this module existed to run
+that walk — an approach that timed out, an arrival test, a dwell that decided when the pose had
+"settled". **3.0 deletes all of it.** A commit now carries a :class:`~openroboxing.studio.
+combination_record.CombinationRecord` — 3-6 recorded key poses with recorded timing — plus a
+**ghost**: the world ``(x, y)`` its final keyframe should land on. It starts **in place**, wherever
+the fighter already stands, and runs the combination's own recorded footwork while the leftover
+travel to the ghost is added as an even drift (``runtime/warp.py``). There is no walk left to be a
+separate phase of, because the combination already contains the footwork.
 
-One continuous intent, held after it arrives
---------------------------------------------
-Since 2.0 a commit is **one intent for its whole life** — *be at this placement, in this pose* — with
-the pose armed on every replan and the plan's length left to MotionBricks. There is no poseless
-approach and no separate pose phase; one motion converges on the placement and the pose together.
-A commit still **runs until it arrives** — and since 2.2 it also runs until the *move is over*,
-which is asked of whoever owns a body rather than counted out. So its span cannot be computed when
-it is issued: ``commit_at``, ``strike_at`` and ``end_tick`` are stamped as it runs and are ``None``
-before that, and *the queue is not a schedule*.
+The consequence that reverses 2.2: a commit's length is known the instant it starts
+--------------------------------------------------------------------------------------
+2.2's whole reason for stamping ``commit_at`` / ``strike_at`` / ``ended_at`` as a move ran, rather
+than computing them at issue time, was that an *approach's* length depended on distance under physics
+and could not be known until the fighter got there. A combination has no such phase: its length is
+``record.duration_ticks``, fixed the day it was captured. So the instant :attr:`Commit.commit_at` is
+known, ``end_tick = commit_at + record.duration_ticks`` is exact arithmetic — nothing is watched for
+and nothing can be "not yet". See :attr:`Commit.end_tick`.
 
-When the queue drains, the last completed commit's intent **stays armed**. That is the whole
-implementation of holding a pose: the generator keeps in-betweening toward a target it has already
-reached. 1.1 switched to an idle clip there instead, and MotionBricks obligingly in-betweened *out
-of* the pose the player had just paid for. Before the first commit of a round there is no such intent
-to hold, and the fighter stands in :data:`OPENING_STANCE_CONTEXT` — the one place an idle clip
-survives 2.0.
+One consequence of that arithmetic is worth naming because it looks like it should need more
+machinery than it does: **the hand-over between queued commits needs no explicit resolution step.**
+:meth:`Commit.is_scheduled` and :meth:`Commit.is_executing` both test ``tick < end_tick`` — a strict
+inequality — so a commit that ends at tick *T* is no longer scheduled *at* T, and whichever commit is
+next in the queue is simply the one :meth:`IntentTimeline._current` finds there. 2.2 needed a
+separate ``_resolve_completion`` pass, run *before* choosing the current commit, purely because its
+``end_tick`` was unknowable until a callback said so; 3.0's ``end_tick`` is knowable the moment
+``commit_at`` is, so there is nothing left to resolve.
 
-This module is therefore a **state machine, not a record**. :meth:`IntentTimeline.generator_intent`
-is its clock: each call may advance the current commit from waiting to arrived, so it must be called
-once per generated frame with non-decreasing ticks, and never as a casual query.
-:meth:`IntentTimeline.executing` and friends are the queries.
+Off-target execution: re-warped for real, from wherever the fighter actually is
+-----------------------------------------------------------------------------------
+A commit's *timing* is fixed the instant it starts, but not its *placement* — physics does not track
+a plan exactly, and a fighter can be pushed or knocked down while a queued commit waits its turn. So
+building a commit's :class:`~openroboxing.runtime.sequence.CombinationRunner` needs to know the
+fighter's **true** position and heading at the tick the commit starts, not the position that was
+assumed when the ghost was placed. That is what the ``anchor`` callable passed to
+:meth:`IntentTimeline.generator_intent` is for: it is called **exactly once per commit**, at the tick
+that commit starts, and :func:`~openroboxing.runtime.warp.warp` is called with ``speed_ceiling=None``
+— nothing is clamped and nothing raises; a combination that starts off-target still reaches its
+ghost, running whatever drift that needs (``spec/intent.md`` "Off-target execution").
 
-Two clocks, deliberately not the same
--------------------------------------
-Staging is unbounded and happens during play. :data:`COMMIT_HORIZON_TICKS` applies only to
-commit → execution, and only as a **floor**: it is the earliest a move may begin, which is what makes
-it readable, not a pause inserted between queued moves. Adding one of those would stutter every
-combination. See ``spec/intent.md`` §"A commit's span".
+The two hold states, unchanged in kind since 2.0
+---------------------------------------------------
+When the queue is drained, :meth:`IntentTimeline.generator_intent` re-issues an intent rather than
+falling back to an idle clip — and there are still **two different situations**, not one degenerate
+case of the other:
+
+- **a commit has completed** — hold *that commit's* intent: its runner's **final leg**, which
+  :class:`~openroboxing.runtime.sequence.CombinationRunner` already returns for any tick past its
+  end. This is the whole implementation of "holding a pose": the runner keeps being asked for the leg
+  live at ``tick``, and past its own end that answer is a fixed point.
+- **none has completed yet** — :data:`OPENING_STANCE_CONTEXT`, the one place an idle clip survives.
+
+They are different because the fighter is in a different situation, not because one is a fallback
+for the other: after a commit there is a specific recorded motion the player paid for and the fighter
+is standing in its last pose; before one there is neither, and a fighter at the opening bell must
+stand rather than travel (`docs/ASSUMPTIONS.md` §A18 — see :data:`OPENING_STANCE_CONTEXT`).
+
+This module is therefore still a **state machine, not a record**. :meth:`IntentTimeline.
+generator_intent` is its clock: each call may start the next commit and build its runner, so it must
+be called once per generated frame with non-decreasing ticks, and never as a casual query.
+
+What is gone, and why it is safe to delete rather than merely retire
+--------------------------------------------------------------------
+The approach existed to fill a gap 1.0's only control left open: a placement with no idea what motion
+should get the fighter there. A combination fills that gap by construction — it already contains the
+footwork — so there is nothing left for a generic walk, an arrival test, a settle test or a counted
+dwell to do. Removed in this rewrite: the approach itself, ``TRAVEL_CONTEXT``,
+``approach_timeout_ticks`` / ``DEFAULT_APPROACH_TIMEOUT_TICKS``, ``has_arrived`` / ``has_settled`` and
+the parameters that carried them, ``apply_adjustment`` and the bounded live adjustment it applied
+(a combination carries no adjustment envelope — ``spec/combination.md``), ``Placement`` (the ghost is
+a bare ``(x, y)``; its heading is derived, never chosen — see ``runtime/warp.py::ghost_heading``), and
+every ``Commit`` field that only made sense once a move had an approach phase and a settle phase to
+distinguish (``strike_at``, ``arrived``, ``completed_by``, ``is_approaching``, ``slot``,
+``adjustment``, ``pose``, ``context``, ``placement``). Full accounting: ``spec/intent.md`` "Removed at
+3.0".
 
 Conventions
 -----------
 - **All ticks are 50 Hz** (:data:`~openroboxing.spec.constants.TICK_HZ`), matching every other
   ``tick`` / ``commit_at`` field in the project.
-- **Placement is MuJoCo world ``(x, y)`` on the ground plane** plus a heading in radians — the same
-  frame the arena, the shadow and the client use. The axis swap upstream wants is owned by
-  ``runtime/generator.py`` and is not visible here.
+- **The ghost is MuJoCo world ``(x, y)`` on the ground plane** — the same frame the arena, the shadow
+  and the client use. Unlike 1.0-2.2's ``Placement`` it carries no heading: the ghost's heading is
+  derived by ``runtime/warp.py::ghost_heading`` from the fighter's own heading plus the combination's
+  recorded turn, and is never player-set (``spec/intent.md`` "The ghost").
 - A commit is **scheduled** from ``issued_at`` and **executing** from ``commit_at``. The queue is
   bounded on the first; the fighter's motion follows the second.
-- **Nothing here knows where a fighter is.** Whether an approach has arrived is geometry, and it
-  arrives as a callable from whoever owns the world.
+- **Nothing here knows where a fighter is**, except at the one instant a commit starts, and even then
+  only through the ``anchor`` callable passed in — geometry belongs to whoever owns the world.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
 import math
-from typing import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from openroboxing.runtime.generator import GeneratorIntent
-from openroboxing.spec.constants import (
-    APPROACH_SPEED_M_S,
-    COMMIT_HORIZON_TICKS,
-    MAX_DWELL_TICKS,
-    MAX_OUTSTANDING_COMMITS,
-    POSE_DWELL_TICKS,
-    RING_SIZE_M,
-    TICK_HZ,
-)
+from openroboxing.runtime.sequence import CombinationRunner
+from openroboxing.runtime.warp import warp
+from openroboxing.spec.constants import COMMIT_HORIZON_TICKS, MAX_OUTSTANDING_COMMITS
 from openroboxing.studio.pose_record import PoseRecord, PoseRecordError, validate
+
+if TYPE_CHECKING:  # `runtime` does not import `studio` at module level - see generator.py's note.
+    from openroboxing.studio.combination_record import CombinationRecord
 
 #: The `spec/intent.md` version this module implements. The test that pairs them is what caught
 #: 2.0 shipping without a changelog entry, so the two move together or not at all.
-SPEC_VERSION = "2.2"
+SPEC_VERSION = "3.0"
 
 
 class IntentError(RuntimeError):
     """An intent was malformed, or the commit rule was broken. Never recovered from silently."""
 
 
-@dataclass(frozen=True)
-class Placement:
-    """Where the move ends: MuJoCo world ``(x, y)`` on the ground plane, heading in radians.
-
-    Since ``spec/intent.md`` 1.0 this is the game's primary control — it is how a player moves at
-    all, not an optional extra on a punch.
-    """
-
-    position: tuple[float, float]
-    heading: float
-
-    def __post_init__(self) -> None:
-        if len(self.position) != 2:
-            raise IntentError(f"placement position must be (x, y), got {self.position!r}")
-        if not all(math.isfinite(v) for v in (*self.position, self.heading)):
-            raise IntentError(
-                f"placement must be finite, got position={self.position!r} "
-                f"heading={self.heading!r}"
-            )
-
-
+# NOTE (D6, `docs/superpowers/specs/2026-08-27-motion-combinations-design.md`) — the owner-agreed
+# direction is *no* loadout: the whole combination library, shared by both fighters and paged through
+# nine at a time. That is a later phase ("Client and protocol" in the design doc, `spec/intent.md`'s
+# `D6` note) and is not implemented here. `Loadout` below is dead to `IntentTimeline` — nothing in
+# this module reads it — and survives only because 23 files across the tools, server and client tests
+# still import it. It stays until that phase retires it (Plan 3), not because it is still the model.
 @dataclass(frozen=True)
 class Loadout:
     """The poses a fighter brought to the match, keyed by the slot the player presses.
@@ -191,9 +216,9 @@ class Loadout:
 
 #: The clip a fighter stands in at the opening bell, **before the first commit of a round has become
 #: current**. Nothing else uses it: once a commit has completed, the fighter holds *that commit's*
-#: intent (:meth:`IntentTimeline._hold_intent`), which is what "no idle clip after a commit" means in
-#: `spec/intent.md` 2.0. Before there has been a commit there is nothing to hold, and this is what a
-#: fighter does instead — a state of its own, not a fallback.
+#: intent — its runner's final leg — which is what "no idle clip after a commit" means. Before there
+#: has been a commit there is nothing to hold, and this is what a fighter does instead — a state of
+#: its own, not a fallback.
 #:
 #: ``idle`` because it is the one clip with ``avg_root_vel = 0.0``. Standing still is a *clip*, not a
 #: zero vector: upstream's ``movement_direction`` is always a unit vector, so "do not move" can only
@@ -202,241 +227,142 @@ class Loadout:
 #: where fighters walked until they hit the ropes and ended a round at opposite ends of the ring.
 OPENING_STANCE_CONTEXT = "idle"
 
-#: The clip a fighter **travels** in: the one every commit is generated in unless a player stages
-#: another. ``walk`` — the release's default locomotion, straight out of upstream's own registry
-#: (``demo/clips.py``: ``neutral_idle_loop_001__A076`` driven at ``avg_root_vel`` 2.0, actual ≈1 m/s).
-#:
-#: It was ``walk_boxing`` until 2026-08-17, and that was the reason a fighter could not reach a
-#: placement that was not straight ahead. ``walk_boxing`` is ``shadow_boxing_R_003__A360_M``
-#: frames 25-35 — a shadow-boxing loop — and upstream's lateral blendspace is **gated on the mode**:
-#: ``blendspace_modes_remap_from_velocity`` swaps in ``walk_left``/``walk_right`` only when the mode
-#: is ``slow_walk`` or ``walk`` (``demo/clips.py``). In the boxing style the remap can never fire, so
-#: the fighter has no sideways gait at all and an off-axis approach can only be walked as a turn.
-#: Measured before the change (`tools/measure_approach.py`, 1.5 m, seven bearings): the plan closed
-#: to 0.02-0.19 m every time while the body closed to 0.007 m straight ahead and 0.38-0.54 m
-#: off-axis, and four of seven commits threw their pose on the approach timeout.
-#:
-#: The poses in ``poses/v0.1`` were harvested and admitted in the boxing style, so their
-#: ``generator_error_rad`` is a number measured in a context that is no longer the default; it wants
-#: re-measuring (`studio/rehearsal.py`, `tools/measure_dwell.py`).
-TRAVEL_CONTEXT = "walk"
-
 
 @dataclass(frozen=True)
 class StagedIntent:
-    """What the player is currently steering. Every field is editable until the commit fires."""
+    """What the player is currently steering: a combination and a ghost, or neither yet.
 
-    context: str
-    pose_slot: str | None = None
-    adjustment: Mapping[str, float] = field(default_factory=dict)
-    #: Where the move should end. The player drives this with a shadow of their own fighter; see
-    #: `spec/protocol.md` §The shadow.
-    placement: Placement | None = None
+    Every field is editable until the commit fires — staging never touches a fired commit
+    (``spec/intent.md`` "Staging never touches a fired commit"). 3.0 leaves exactly two channels
+    where 1.0-2.2 had four: the adjustment envelope is gone because a combination carries no
+    adjustment (``spec/combination.md``), and the style preset is gone because every leg runs
+    :data:`~openroboxing.runtime.sequence.COMBINATION_CONTEXT` — there is nothing left to choose.
+    """
+
+    #: A name in the combination library, or ``None`` if nothing is selected yet.
+    combination: str | None = None
+    #: Where the combination's **last keyframe** must land: world ``(x, y)`` only. The heading is
+    #: derived (``runtime/warp.py::ghost_heading``) and is never part of what is staged — see
+    #: `spec/intent.md` "Ghost heading is derived, not staged".
+    ghost: tuple[float, float] | None = None
 
     def is_committable(self) -> bool:
-        return self.pose_slot is not None
+        return self.combination is not None and self.ghost is not None
+
+
+def _validate_ghost(ghost: tuple[float, float]) -> None:
+    """A client sends this. A malformed value must fail here, not silently reach the generator."""
+    if len(ghost) != 2:
+        raise IntentError(f"ghost must be (x, y), got {ghost!r}")
+    if not all(math.isfinite(v) for v in ghost):
+        raise IntentError(f"ghost must be finite, got {ghost!r}")
 
 
 @dataclass
 class Commit:
-    """A staged intent, frozen: *go to this placement and arrive in this pose*.
+    """A staged intent, frozen: play ``record``, starting wherever the fighter is, landing on
+    ``ghost``.
 
-    The **intent** half — pose, context, placement, ``issued_at`` — is fixed the instant the player
-    commits and is never written again. The **span** half is not, because a commit runs until it
-    arrives: ``commit_at``, ``strike_at`` and ``arrived`` are ``None`` until the move reaches each
-    stage, and ``end_tick`` follows from ``strike_at``.
+    Unlike 1.0-2.2, a commit's span is arithmetic rather than watched-for. ``record.duration_ticks``
+    is fixed the day the combination was captured, so the instant :attr:`commit_at` is known,
+    :attr:`end_tick` is too (``spec/intent.md`` "A commit's span"). There is no approach to time out
+    and no dwell to count, so the two-stage ``commit_at`` / ``strike_at`` distinction 1.0-2.2 needed
+    is gone with them — a commit is either not started, running, or finished, and that is one field
+    (``commit_at``) plus one piece of arithmetic (``end_tick``), not two clocks.
 
-    Since ``spec/intent.md`` 2.0 the intent is the *same* for every tick of the commit's life — one
-    continuous "be at this placement, in this pose". So the stages below are not different motions,
-    they are only how far along one motion is:
-
-    ==================  =================================================================
-    ``commit_at`` None  issued, still inside the readable window or queued behind another
-    ``strike_at`` None  **executing, not there yet** — converging on placement *and* pose
-    both set            **arrived** — standing in the pose until ``end_tick``
-    ==================  =================================================================
-
-    A commit therefore has no length of its own. ``end_tick`` is arrival plus
-    :data:`~openroboxing.spec.constants.POSE_DWELL_TICKS`, the measured time the slowest pose in the
-    library takes to settle — nothing here is derived from the pose's ``horizon_tokens`` any more,
-    because MotionBricks chooses how long the motion runs.
+    :attr:`runner` is built exactly once, the first time :meth:`IntentTimeline.generator_intent`
+    finds this commit current. It re-warps from the fighter's *true* position at that tick rather
+    than trusting wherever the ghost was aimed when the player committed (``spec/intent.md``
+    "Off-target execution") — which is why building it needs a live ``anchor`` callback rather than a
+    value stashed at issue time.
     """
 
-    pose: PoseRecord  # the adjustment is already applied
-    context: str
-    placement: Placement | None
+    #: The combination this commit plays, in full — footwork, poses and timing all come from it.
+    record: CombinationRecord
+    #: Where the combination's last keyframe must land: world ``(x, y)``.
+    ghost: tuple[float, float]
+    #: The tick the player pressed commit.
     issued_at: int
-    slot: str
-    #: The live adjustment as the player set it. Kept even though :attr:`pose` already carries it
-    #: baked in, because a match record's ``CommitEvent`` is the record of what the *player did* —
-    #: and "jab, nudged 4 degrees left" is not recoverable from the resulting angles alone.
-    adjustment: Mapping[str, float] = field(default_factory=dict)
-
-    #: Tick the approach began. ``None`` until it does.
+    #: The tick this commit became current and started running. ``None`` until it does.
     commit_at: int | None = None
-    #: Tick the fighter arrived and the pose was armed. ``None`` until it does.
-    strike_at: int | None = None
-    #: Whether :attr:`strike_at` came from arriving or from the approach timing out. Recorded rather
-    #: than inferred, because "threw it short" is a thing a replay should be able to show.
-    arrived: bool | None = None
-    #: Tick the move finished and the next commit could become current. ``None`` until it does.
+    #: ``commit_at + record.duration_ticks``, stamped in the same step as ``commit_at`` because it
+    #: is exact arithmetic the instant that is known — never watched for, unlike 2.2's ``ended_at``.
+    #: Kept as a plain field (not only derived by :attr:`end_tick`) so a match record or a replay can
+    #: read a commit's history off its attributes the same way it reads ``commit_at``.
     ended_at: int | None = None
-    #: What ended it: ``"settled"`` (the body stopped closing on the pose), ``"dwell"`` (the counted
-    #: rule, for a caller with no body to measure) or ``"timeout"`` (:data:`MAX_DWELL_TICKS`, the
-    #: guard). Recorded rather than inferred, for the same reason as :attr:`arrived`.
-    completed_by: str | None = None
+    #: The warped, sequenced motion this commit runs once it has started. ``None`` until then.
+    runner: CombinationRunner | None = None
+
+    def __post_init__(self) -> None:
+        _validate_ghost(self.ghost)
 
     @property
     def end_tick(self) -> int | None:
-        """The tick this commit finished, or ``None`` while it is still running.
+        """The tick this commit finishes, or ``None`` before it has started.
 
-        ``None`` means *later than any tick you can name*, not zero and not "already over". Every
-        predicate below reads it that way and so must every caller.
-
-        **Stamped, not computed** since 2.2. It used to be ``strike_at + POSE_DWELL_TICKS`` — a
-        counter, so the queue advanced on a clock: every move waited out the settle time of the
-        *slowest pose in the library* whether or not its own had settled, and the measured
-        distribution is `[0, 0, 0, 0, 0, 2, 5, 12, 12, 74]` ticks, so nine moves in ten spent the
-        wait on nothing. Now :meth:`IntentTimeline.generator_intent` asks whoever owns a body
-        whether the move is over, and stamps the tick it says yes — the project owner's rule:
-        *when the plan is finished and the robot is in position, pass the next target*.
-
-        The counted dwell survives in two places, both explicit: as the rule for a caller that has
-        no body to measure (the Studio's rehearsals), and as :data:`MAX_DWELL_TICKS`, the guard that
-        stops a pose the body never settles into from holding the queue forever.
+        Computed the instant :attr:`commit_at` is, not stamped when a body settles — the reversal
+        `spec/intent.md` 3.0 makes over 2.2's "the queue is not a schedule". ``None`` here means
+        "has not started yet", not "unknown": once set, this value is exact and is never revised.
         """
         return self.ended_at
 
     def is_scheduled(self, tick: int) -> bool:
-        """True while this commit exists and has not finished — issued, walking, or waiting."""
+        """True while this commit exists and has not finished — issued, queued, or running."""
         if tick < self.issued_at:
             return False
         end = self.end_tick
         return end is None or tick < end
 
     def is_executing(self, tick: int) -> bool:
-        """True once the move itself is under way. **Walking counts** — walking is the move."""
+        """True once this commit's motion is actually under way."""
         if self.commit_at is None or tick < self.commit_at:
             return False
         end = self.end_tick
         return end is None or tick < end
-
-    def is_approaching(self, tick: int) -> bool:
-        """True while this commit is under way and has not reached its placement yet.
-
-        Still exactly "executing but not yet arrived" — 2.0 removed the poseless approach, not the
-        approach. ``server/protocol.py`` sends this so a client can show a move as travelling rather
-        than landed.
-        """
-        return self.is_executing(tick) and (self.strike_at is None or tick < self.strike_at)
-
-
-def approach_timeout_ticks(ring_size: float, speed: float = APPROACH_SPEED_M_S) -> int:
-    """How long an approach may walk before the fighter throws the pose where it stands.
-
-    Derived, not chosen: **the ring's diagonal at the measured sustained approach speed.** An
-    approach that has taken longer than crossing the whole ring corner to corner is not walking
-    anywhere — it is wedged in a corner, leaning on its opponent, or knocked down — and every commit
-    queued behind it is waiting on something that will not happen.
-
-    At competition dimensions (4.90 m) that is 8.4 s, against a slowest *observed* arrival of 4.3 s
-    (``scratchpad/probe_arrival.py``), so roughly a factor of two in hand. The factor is the
-    consequence of the derivation, not a safety margin someone picked.
-
-    It is a function of ``ring_size`` because ``ArenaConfig.ring_size`` is a match parameter that
-    `M4-T4` is expected to change; a constant would silently stop matching the ring.
-    """
-    if not math.isfinite(ring_size) or ring_size <= 0.0:
-        raise IntentError(f"ring_size must be a positive length, got {ring_size!r}")
-    if not math.isfinite(speed) or speed <= 0.0:
-        raise IntentError(f"approach speed must be positive, got {speed!r}")
-    return int(math.ceil(ring_size * math.sqrt(2.0) / speed * TICK_HZ))
-
-
-#: The timeout for a competition-sized ring. A world with its own ``ArenaConfig`` passes its own.
-DEFAULT_APPROACH_TIMEOUT_TICKS = approach_timeout_ticks(RING_SIZE_M)
-
-
-def apply_adjustment(pose: PoseRecord, adjustment: Mapping[str, float]) -> PoseRecord:
-    """Apply a bounded live adjustment to an admitted pose.
-
-    The base pose is admitted offline; the adjustment is not individually admitted, so it is legal
-    only inside the envelope whose corners *were* admitted (``spec/intent.md`` §Feasibility). An
-    adjustment outside the envelope, or on a joint the envelope does not cover, raises — clamping it
-    would silently produce a pose nobody has ever measured.
-    """
-    if not adjustment:
-        return pose
-
-    angles = dict(pose.joint_angles)
-    for joint, delta in adjustment.items():
-        bound = pose.adjustment_envelope.get(joint)
-        if bound is None:
-            raise IntentError(
-                f"pose {pose.name!r} has no adjustment envelope for {joint!r}; it allows "
-                f"{sorted(pose.adjustment_envelope) or 'no adjustment at all'}"
-            )
-        if abs(delta) > bound:
-            raise IntentError(
-                f"adjustment {delta:+.4f} on {joint!r} leaves pose {pose.name!r}'s envelope of "
-                f"+-{bound}"
-            )
-        angles[joint] = angles[joint] + delta
-
-    return replace(pose, joint_angles=angles)
 
 
 class IntentTimeline:
     """The commit queue for one fighter.
 
     Args:
-        loadout: the poses this fighter may commit.
+        library: every combination this fighter may commit, keyed by the name a player selects —
+            the whole shared library, per D6 (``spec/intent.md``'s note on the eventual retirement
+            of :class:`Loadout`).
         horizon_ticks: **minimum** lead from commit to execution. Defaults to the canonical
-            :data:`COMMIT_HORIZON_TICKS`; a match may parameterise it.
+            :data:`~openroboxing.spec.constants.COMMIT_HORIZON_TICKS`; a match may parameterise it.
         max_outstanding: how many commits may be unfinished at once. Defaults to
-            :data:`MAX_OUTSTANDING_COMMITS`.
-        approach_timeout_ticks: how long an approach may walk before the fighter throws where it
-            stands. Defaults to the competition ring's diagonal at :data:`APPROACH_SPEED_M_S`; a
-            world with a different ring must pass its own, or a fighter in a small ring waits far
-            longer than that ring can justify.
-        require_admitted: whether the loadout's poses must be admitted. A match always requires it;
-            the Studio sets it False so a draft pose can be rehearsed before it is measured.
+            :data:`~openroboxing.spec.constants.MAX_OUTSTANDING_COMMITS`.
+        require_admitted: whether every combination in ``library`` must be ``"admitted"``. A match
+            always requires it; the Studio sets it False so a draft combination can be rehearsed
+            before it has been measured (``spec/intent.md`` "Admission is enforced at construction").
     """
 
     def __init__(
         self,
-        loadout: Loadout,
+        library: Mapping[str, CombinationRecord],
         *,
-        context: str = TRAVEL_CONTEXT,
         horizon_ticks: int = COMMIT_HORIZON_TICKS,
         max_outstanding: int = MAX_OUTSTANDING_COMMITS,
-        approach_timeout_ticks: int | None = None,
-        max_dwell_ticks: int = MAX_DWELL_TICKS,
         require_admitted: bool = True,
     ) -> None:
         if horizon_ticks < 0:
             raise IntentError(f"horizon_ticks must not be negative, got {horizon_ticks}")
         if max_outstanding < 1:
             raise IntentError(f"max_outstanding must be at least 1, got {max_outstanding}")
-        if approach_timeout_ticks is not None and approach_timeout_ticks < 1:
-            raise IntentError(
-                f"approach_timeout_ticks must be at least 1, got {approach_timeout_ticks}"
-            )
-        if max_dwell_ticks < 1:
-            raise IntentError(f"max_dwell_ticks must be at least 1, got {max_dwell_ticks}")
-        loadout.validate(require_admitted=require_admitted)
+        if not library:
+            raise IntentError("the combination library is empty")
+        if require_admitted:
+            for name, record in library.items():
+                if record.admission != "admitted":
+                    raise IntentError(
+                        f"combination {name!r} is {record.admission!r}; a match may only use "
+                        "admitted combinations"
+                    )
 
-        self.loadout = loadout
+        self.library: dict[str, CombinationRecord] = dict(library)
         self.horizon_ticks = horizon_ticks
         self.max_outstanding = max_outstanding
-        self.approach_timeout_ticks = (
-            DEFAULT_APPROACH_TIMEOUT_TICKS
-            if approach_timeout_ticks is None
-            else approach_timeout_ticks
-        )
-        #: The guard on a dwell: a move ends here whatever the body is doing.
-        self.max_dwell_ticks = max_dwell_ticks
-        self._staged = StagedIntent(context=context)
+        self._staged = StagedIntent()
         self._commits: list[Commit] = []
         #: Highest tick :meth:`generator_intent` has been driven to. The queue advances there, so it
         #: must never be asked about a tick it has already passed.
@@ -452,61 +378,49 @@ class IntentTimeline:
         """Every commit issued, in order. This is the log a match record is built from."""
         return tuple(self._commits)
 
+    def _resolve(self, name: str) -> CombinationRecord:
+        if name not in self.library:
+            raise IntentError(
+                f"combination {name!r} is not in the library; it has {sorted(self.library)}"
+            )
+        return self.library[name]
+
     def stage(
         self,
         *,
-        pose_slot: str | None = None,
-        adjustment: Mapping[str, float] | None = None,
-        placement: Placement | None = None,
-        context: str | None = None,
+        combination: str | None = None,
+        ghost: tuple[float, float] | None = None,
     ) -> StagedIntent:
         """Edit the staged intent. Always allowed, including while a commit is executing.
 
         Only the channels passed are changed; the rest keep their current value. Staging never
         affects the fighter — it is the player's private aim, and it fires only on :meth:`commit`.
         """
-        if pose_slot is not None:
-            self.loadout.resolve(pose_slot)  # fail at staging time, not at commit time
+        if combination is not None:
+            self._resolve(combination)  # fail at staging time, not at commit time
+        if ghost is not None:
+            _validate_ghost(ghost)
         self._staged = StagedIntent(
-            context=context if context is not None else self._staged.context,
-            pose_slot=pose_slot if pose_slot is not None else self._staged.pose_slot,
-            adjustment=dict(adjustment) if adjustment is not None else self._staged.adjustment,
-            placement=placement if placement is not None else self._staged.placement,
+            combination=combination if combination is not None else self._staged.combination,
+            ghost=ghost if ghost is not None else self._staged.ghost,
         )
         return self._staged
 
-    def clear_pose(self) -> StagedIntent:
-        """Unstage the pose, leaving the other channels. Not a cancellation — nothing has fired."""
-        self._staged = StagedIntent(
-            context=self._staged.context,
-            pose_slot=None,
-            adjustment=self._staged.adjustment,
-            placement=self._staged.placement,
-        )
+    def clear_combination(self) -> StagedIntent:
+        """Unstage the combination, leaving the ghost. Not a cancellation — nothing has fired."""
+        self._staged = StagedIntent(combination=None, ghost=self._staged.ghost)
         return self._staged
 
     # -- the queue ----------------------------------------------------------------------------------
     def scheduled(self, tick: int) -> tuple[Commit, ...]:
-        """Every commit that exists and has not finished at ``tick``, executing first.
+        """Every commit that exists and has not finished at ``tick``, in queue order.
 
         This is what the queue bound counts and what a client is shown. A commit leaves it by
         finishing, never by being cancelled.
         """
         return tuple(c for c in self._commits if c.is_scheduled(tick))
 
-    def executing(self, tick: int) -> Commit | None:
-        """The commit whose move is actually under way at ``tick``, if any.
-
-        At most one: a commit only begins once the one in front of it has finished, so the executing
-        spans cannot overlap. A **query** — unlike :meth:`generator_intent` it advances nothing, so
-        asking never changes what a fighter does.
-        """
-        for commit in self._commits:
-            if commit.is_executing(tick):
-                return commit
-        return None
-
-    def current(self, tick: int) -> Commit | None:
+    def _current(self, tick: int) -> Commit | None:
         """The commit that should be driving the fighter at ``tick``, started or not.
 
         The **oldest unfinished** one, once its readable window has elapsed. ``None`` means hold:
@@ -516,6 +430,10 @@ class IntentTimeline:
         A commit still inside its window blocks the queue rather than being skipped over. Letting a
         later commit start first would reorder them, and order is the one thing a player controls
         about a queue they cannot cancel.
+
+        No separate "has this finished" pass runs first, unlike 2.2: :meth:`Commit.is_scheduled`
+        already excludes the boundary tick itself, so a commit that ends at tick *T* is simply absent
+        from consideration at *T* and the next one in the queue is found here directly.
         """
         for commit in self._commits:
             if not commit.is_scheduled(tick):
@@ -525,28 +443,11 @@ class IntentTimeline:
             return commit
         return None
 
-    def anchor_placement(self, now: int) -> Placement | None:
-        """Where the queue leaves this fighter standing, or ``None`` if it is drained.
-
-        The shadow hangs off this rather than off the live root pose: the next move starts from the
-        end of the queue, and an anchor that moves under the player's cursor for the duration of
-        every move cannot be aimed (`spec/protocol.md` §The shadow).
-
-        The **last unfinished commit's** placement, by issue order. Since 1.1 that cannot be found by
-        latest ``end_tick`` — an unfinished commit has none.
-        """
-        outstanding = [c for c in self._commits if c.is_scheduled(now)]
-        if not outstanding:
-            return None
-        return outstanding[-1].placement
-
     def commit(self, now: int) -> Commit:
         """Queue the staged intent.
 
         The move begins no earlier than ``now + horizon_ticks`` — the floor that makes an isolated
-        commit readable — and no earlier than the commit in front of it finishes. Which of those
-        binds is not known here and is not decided here: since 1.1 an approach ends by arriving, so
-        the queue's timing is settled as it runs, by :meth:`generator_intent`.
+        commit readable — and no earlier than the commit in front of it finishes.
 
         Raises:
             IntentError: if nothing is staged, or the queue is full. A refused commit is refused
@@ -563,33 +464,28 @@ class IntentTimeline:
 
         outstanding = self.scheduled(now)
         if len(outstanding) >= self.max_outstanding:
-            # No "frees at tick N": since 1.1 the move in front ends when the fighter gets there,
-            # and a number invented here would be a promise the ring has not agreed to.
             raise IntentError(
                 f"cannot commit at tick {now}: {len(outstanding)} moves are already queued, the "
-                f"limit is {self.max_outstanding}. A slot frees when the move in front arrives and "
-                "throws. No cancellation."
+                f"limit is {self.max_outstanding}. A slot frees when the move in front finishes. "
+                "No cancellation."
             )
-        if not self._staged.is_committable():
-            raise IntentError("cannot commit: no pose is staged")
+        if self._staged.combination is None:
+            raise IntentError("cannot commit: no combination is staged")
+        if self._staged.ghost is None:
+            raise IntentError("cannot commit: no ghost is staged")
 
-        pose = apply_adjustment(
-            self.loadout.resolve(self._staged.pose_slot), self._staged.adjustment
-        )
-        commit = Commit(
-            pose=pose,
-            context=self._staged.context,
-            placement=self._staged.placement,
-            issued_at=now,
-            slot=self._staged.pose_slot,
-            adjustment=dict(self._staged.adjustment),
-        )
+        record = self._resolve(self._staged.combination)
+        commit = Commit(record=record, ghost=self._staged.ghost, issued_at=now)
         self._commits.append(commit)
         return commit
 
     # -- driving the generator -----------------------------------------------------------------------
     def generator_intent(
-        self, tick: int, *, facing_angle: float = 0.0, has_arrived=None, has_settled=None
+        self,
+        tick: int,
+        *,
+        facing_angle: float = 0.0,
+        anchor: Callable[[], tuple[tuple[float, float], float]] | None = None,
     ) -> GeneratorIntent:
         """The control signals for the tick **this frame will be played at**, advancing the queue.
 
@@ -597,34 +493,30 @@ class IntentTimeline:
         produced ahead of the tick that consumes them, so asking about "now" slides every move a
         fixed lookahead late. ``runtime/reference.py`` owns that mapping.
 
-        **This is the timeline's clock, not a query.** Calling it is what starts an approach, ends
-        one, and so decides when the next commit in the queue begins. Call it exactly once per
+        **This is the timeline's clock, not a query.** Calling it is what starts a commit and builds
+        its runner, so it decides when the next commit in the queue begins. Call it exactly once per
         generated frame, with non-decreasing ticks — which is enforced below, because a caller that
         drifts backwards would rewrite a move's history rather than fail.
 
-        What comes back, by stage:
+        What comes back, by state:
 
-        - **a commit is current** — its own continuous intent, placement and pose together, from the
-          tick it starts to the tick it ends. See :meth:`_commit_intent`.
-        - **nothing current, but a commit has completed** — that commit's intent, unchanged: the
-          fighter holds the pose it was commanded into. See :meth:`_hold_intent`.
+        - **a commit is current** — the live leg of its :class:`~openroboxing.runtime.sequence.
+          CombinationRunner`, built the first time this method finds the commit current.
+        - **nothing current, but a commit has completed** — that commit's runner's **final leg**,
+          held forever: the fighter stands in the combination's last pose.
         - **nothing current and none has completed** — the round's opening stance,
-          :data:`OPENING_STANCE_CONTEXT`, which is the only place an idle clip is still used.
+          :data:`OPENING_STANCE_CONTEXT`, the only place an idle clip is still used.
 
         Args:
-            facing_angle: generator-frame heading to face when nothing supplies one — the opening
-                stance, and commits issued without a placement. A commit with a placement faces its
-                own heading, held included. The caller owns the conversion out of world frame;
-                nothing here knows about the generator's frame.
-            has_arrived: ``(commit) -> bool``, asked once per approach frame. **Required for any
-                commit that carries a placement** — there is nothing else that could end its
-                approach, and defaulting to "arrived" would quietly restore the 1.0 bug where a move
-                never reached where it was pointed.
-            has_settled: ``(commit) -> bool``, asked once per frame after a commit has struck: has
-                the body stopped closing on the pose? Omitting it is legal and means *the counted
-                dwell* — the only rule available to a caller with no body to measure, such as a
-                Studio rehearsal. A world that has one passes it, and then the queue advances on the
-                move being over rather than on a clock (`spec/intent.md` 2.2).
+            facing_angle: generator-frame heading to face in the opening stance, before any commit
+                has become current. Ignored once a commit is executing or held — its own recorded
+                heading takes over.
+            anchor: ``() -> ((x, y), heading)``, the fighter's *true* position and heading right now.
+                Called **exactly once per commit**, the tick that commit starts, to build its runner
+                — never once per tick, and never for a commit that is already running. Required for
+                any commit that is starting: a combination that starts in place cannot be built
+                without knowing where "in place" is, and defaulting to the origin would silently
+                teleport the fighter.
         """
         if tick < self._driven_to:
             raise IntentError(
@@ -633,134 +525,46 @@ class IntentTimeline:
             )
         self._driven_to = tick
 
-        commit = self.current(tick)
-        # Completion is decided *before* the current move is chosen, so a commit that ends on this
-        # tick hands over on this tick. Deciding it afterwards leaves a one-tick hole between queued
-        # moves — small, and exactly the stutter `spec/intent.md` §"A commit's span" forbids.
-        if commit is not None and commit.strike_at is not None:
-            self._resolve_completion(commit, tick, has_settled)
-            if commit.ended_at is not None:
-                commit = self.current(tick)
-
+        commit = self._current(tick)
         if commit is None:
             return self._hold_intent(tick, facing_angle)
 
         if commit.commit_at is None:
+            if anchor is None:
+                raise IntentError(
+                    f"commit {commit.record.name!r} starts at tick {tick} but no anchor was passed "
+                    "to generator_intent, so 'in place' has no place to start from and everything "
+                    "queued behind it would wait forever. Pass anchor= from whoever knows where the "
+                    "fighter is."
+                )
+            position, heading = anchor()
             commit.commit_at = tick
+            commit.ended_at = tick + commit.record.duration_ticks
+            legs = warp(commit.record, position, heading, commit.ghost, speed_ceiling=None)
+            commit.runner = CombinationRunner(commit.record, legs, commit_at=tick)
 
-        if commit.strike_at is None:
-            self._resolve_approach(commit, tick, has_arrived)
-
-        return self._commit_intent(commit, facing_angle)
-
-    def _commit_intent(self, commit: Commit, facing_angle: float) -> GeneratorIntent:
-        """The one intent a commit has for its whole life: *be there, in that pose*.
-
-        **The pose is armed on every replan, not only once it has arrived.** That is the change 2.0
-        is: the generator in-betweens toward a target it is given, so a walk that carries the pose
-        converges on the pose *while it travels* instead of snapping into it at the end. Measured
-        (2026-08-13, ``tools/measure_dwell.py`` over ``studio/rehearsal.rehearse_approach``) against
-        a placement 2.5 m away: hook-right closes 2.500 m → 0.028 m and 17.0° → 6.0°, and then holds.
-        The same six seconds with the pose withheld until arrival never converges at all — 17.0° →
-        18.5°.
-
-        ``horizon_tokens`` is deliberately ``None``: one plan covers only ~54 % of the distance asked
-        for at *any* length, so a forced length buys nothing and costs the model its own choice.
-        Left free it picks 11 tokens at 0.5 m and 16 at 6.0 m, which lands plan speed near the
-        0.83 m/s the robot actually sustains. The pose's own ``horizon_tokens`` stays in the record
-        as the author's statement of how long the move is meant to take, and as the Studio's
-        rehearsal parameter; the runtime simply stops forwarding it.
-        """
-        placement = commit.placement
-        return GeneratorIntent(
-            style=commit.context,
-            facing_angle=placement.heading if placement else facing_angle,
-            target_position=placement.position if placement else None,
-            target_heading=placement.heading if placement else None,
-            pose=commit.pose,
-            horizon_tokens=None,
-        )
+        return commit.runner.intent_for(tick)
 
     def _hold_intent(self, tick: int, facing_angle: float) -> GeneratorIntent:
         """What a fighter with nothing current does. **Two states, not one:**
 
-        - **a commit has completed** — hold *that commit's* intent, unchanged.
+        - **a commit has completed** — hold *that commit's* runner at its final leg.
         - **none has yet** — the round's opening stance, :data:`OPENING_STANCE_CONTEXT`.
 
         They are different because the fighter is in a different situation, not because one is a
-        degenerate form of the other. After a commit there is a placement and a pose the player paid
-        for and the fighter is standing in; before one there is neither, and a fighter at the opening
-        bell must stand rather than travel (§A18 — see :data:`OPENING_STANCE_CONTEXT`).
+        degenerate form of the other — see the module docstring.
 
-        **Re-issuing the last commit's intent is the entire implementation of holding a pose.** There
-        is no idle clip, no freeze branch and no repeated-frame counter — the generator simply keeps
-        in-betweening toward a placement and a pose it has already reached, which is a fixed point.
-        1.1 switched to an idle clip here, so MotionBricks in-betweened *out of* the pose the instant
-        the move ended and the fighter drifted back to a neutral stance; the pose the player paid for
-        existed for one 30 Hz frame. That is what "no idle clip **after** a commit" means, and it is
-        the whole of what 2.0 removed: the opening stance below is untouched by it.
+        **Re-issuing the last commit's final leg is the entire implementation of holding a pose.**
+        There is no idle clip, no freeze branch and no repeated-frame counter — the runner simply
+        keeps being asked for the leg live at ``tick``, which past its own end is a fixed point
+        (:meth:`~openroboxing.runtime.sequence.CombinationRunner.leg_index`).
 
-        The held intent carries its own ``target_heading``, so a held fighter **does not turn to
-        track its opponent**. Re-orienting is paid for by the next commit. Both that and "the
-        committed pose is the resting state" are the project owner's calls, 2026-08-13.
+        The last commit in queue order with a runner is exactly the last *completed* one whenever
+        this is reached: if :meth:`_current` returned ``None``, every commit that has started must
+        already be finished — a still-running one would have been current instead, since commits
+        execute strictly in order with no gaps (the hand-over rule above).
         """
         for commit in reversed(self._commits):
-            end = commit.end_tick
-            if end is not None and tick >= end:
-                return self._commit_intent(commit, facing_angle)
+            if commit.runner is not None:
+                return commit.runner.intent_for(tick)
         return GeneratorIntent(style=OPENING_STANCE_CONTEXT, facing_angle=facing_angle)
-
-    def _resolve_approach(self, commit: Commit, tick: int, has_arrived) -> None:
-        """Decide whether ``commit`` is still walking, or has arrived and should throw."""
-        if commit.placement is None:
-            # Nothing to walk to: "do this where you stand". Not a fallback - a commit without a
-            # placement is a complete instruction, and it is what the Studio and the tools issue.
-            commit.strike_at, commit.arrived = tick, True
-            return
-
-        if tick - commit.commit_at >= self.approach_timeout_ticks:
-            commit.strike_at, commit.arrived = tick, False
-            return
-
-        if has_arrived is None:
-            raise IntentError(
-                f"commit {commit.slot!r} carries a placement but no arrival test was passed to "
-                "generator_intent, so its approach could never end and everything queued behind it "
-                "would wait out approach_timeout_ticks. Pass has_arrived= from whoever knows where "
-                "the fighter is."
-            )
-        if has_arrived(commit):
-            commit.strike_at, commit.arrived = tick, True
-
-    def _resolve_completion(self, commit: Commit, tick: int, has_settled) -> None:
-        """Decide whether the move is over, and stamp :attr:`Commit.ended_at` if it is.
-
-        Three ways a commit can end, and they are recorded apart because they mean different things
-        to a replay:
-
-        - **settled** — ``has_settled`` says the body has stopped closing on the pose. This is the
-          normal case and the whole point of 2.2: the next target goes in when the move is done, not
-          when a counter says the slowest pose in the library would have been done.
-        - **dwell** — no ``has_settled`` was passed, so the counted
-          :data:`~openroboxing.spec.constants.POSE_DWELL_TICKS` applies. Read as a module global so
-          the bench's knob still reaches it.
-        - **timeout** — :attr:`max_dwell_ticks`, the guard. Without it a pose the body never settles
-          into holds every commit behind it forever, which is the one failure the counted dwell did
-          not have.
-
-        The strike frame itself is never a settle test: a commit that struck this tick has not yet
-        had a tick in which to settle, and a body already standing in the pose would end the move on
-        the same frame it began it.
-        """
-        held = tick - commit.strike_at
-        if held <= 0:
-            return
-        if held >= self.max_dwell_ticks:
-            commit.ended_at, commit.completed_by = tick, "timeout"
-            return
-        if has_settled is None:
-            if held >= POSE_DWELL_TICKS:
-                commit.ended_at, commit.completed_by = tick, "dwell"
-            return
-        if has_settled(commit):
-            commit.ended_at, commit.completed_by = tick, "settled"
