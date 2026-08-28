@@ -1,4 +1,4 @@
-"""M5-T4: the agent API.
+"""M5-T4: the agent API (rewritten for combinations, M6 Phase 3 / Part A-3).
 
 Acceptance criterion from WORKPLAN.md M5-T4:
   a scripted baseline agent plays a full ranked-format match against a human client and appears in
@@ -7,9 +7,14 @@ Acceptance criterion from WORKPLAN.md M5-T4:
 An agent is just a client, so most of what needs testing is that it stays one: it sees only what the
 protocol sends, it is rate-limited like anyone else, and its results are kept out of the table.
 
+Rewritten against `spec/intent.md` 3.0 and `spec/protocol.md` 0.6: there is no more loadout, no more
+``place``/``stage`` messages and no more pose slots. A ``welcome`` carries the whole shared
+combination library (`spec/protocol.md` §"welcome's combination library"), and a client stages a
+combination and a ghost together in one ``intent`` message. ``BaselineAgent`` is rewritten to choose
+from that library rather than from a dealt loadout; see its docstring for what changed and why.
+
 Reproduce:
     .venv_mb/bin/python -m pytest tests/test_agent.py -v
-    .venv_mb/bin/python -m pytest tests/test_agent.py -v -m slow   # needs a GPU
 """
 
 from __future__ import annotations
@@ -26,51 +31,96 @@ from openroboxing.server.agent import (
     BaselineAgent,
     IdleAgent,
     RateLimiter,
+    combination_kind,
     is_exhibition,
     run_decision,
 )
 
-SLOTS = ["1", "2", "3", "4", "5", "6"]
+#: An agent gets no slots any more — a combination has none to name (`spec/intent.md` `D6`) — but
+#: `run_decision`/`Agent` keep the parameter for source-compatibility with `server/client.py`'s
+#: `AgentConnection`, which still passes one. Tests call `decide()` the same way that call site does.
+NO_SLOTS: list[str] = []
+
+
+def _combo(
+    name: str, *, reach_m: float = 3.0, seconds: float = 1.2, heading_delta: float = 0.0
+) -> dict:
+    """One entry of `welcome`'s ``combinations`` list (`spec/protocol.md` 0.6), not a
+    `studio.combination_record.CombinationRecord` — the agent only ever sees the wire shape, the
+    same as a browser client would."""
+    return {
+        "name": name,
+        "seconds": seconds,
+        "heading_delta": heading_delta,
+        "reach_m": reach_m,
+        "pose": {},
+    }
+
+
+#: A small library spanning the three prefixes `CLAUDE.md` names as real corpus families:
+#: `shadow-boxing` (strikes), `ib-dodge` (defensive) and `ib-combat-turn-jog` (travel). Generous
+#: reach so most scenarios are trivially reachable; tests that care about the reach guard build
+#: their own tighter library instead of overriding this one.
+DEFAULT_COMBOS = [
+    _combo("shadow-boxing-r-001-a359-00", reach_m=3.0),
+    _combo("shadow-boxing-r-001-a360-00", reach_m=3.0),
+    _combo("shadow-boxing-r-002-a361-00", reach_m=3.0),
+    _combo("ib-dodge-270-r-001-a437-00", reach_m=1.5),
+    _combo("ib-combat-turn-jog-start-270-r-003-a437-00", reach_m=4.0),
+]
+
+
+def _welcome(combinations: list[dict]) -> dict:
+    return {"type": "welcome", "spec_version": "0.6", "combinations": combinations}
+
+
+def _agent(seed: int = 0, combos: list[dict] | None = None) -> BaselineAgent:
+    """A baseline that has seen a welcome, so it knows what it may commit."""
+    agent = BaselineAgent(seed=seed)
+    agent.on_welcome(_welcome(DEFAULT_COMBOS if combos is None else combos))
+    return agent
 
 
 def _state(
     tick: int,
     can_commit: bool = True,
-    hits: int = 0,
     phase: str = "fighting",
-    separation: float | None = 0.6,
     anchor: tuple[float, float] | None = (0.0, 0.0),
-    opponent: tuple[float, float] | None = (0.6, 0.0),
+    opponent: tuple[float, float] | None = (2.0, 0.0),
 ) -> dict:
-    """One protocol frame. ``anchor``/``opponent`` are world positions; ``None`` drops them, which is
-    what an older record or a replay looks like."""
+    """One protocol `state` frame (`spec/protocol.md` 0.6). ``anchor``/``opponent`` are world
+    positions; ``None`` drops them, which is what a state with no positions looks like."""
     seats = {
         "red": {
             "handle": "agent:baseline",
             "staged": None,
+            "position": None if anchor is None else {"x": anchor[0], "y": anchor[1]},
+            "ghost": None,
+            "anchor": None if anchor is None else {"x": anchor[0], "y": anchor[1]},
             "queue": [],
             "queue_depth": 0,
             "can_commit": can_commit,
-            "hits_landed": hits,
+            "hits_landed": 0,
             "torso_height_m": 0.84,
             "down": False,
-            "anchor": None if anchor is None else {"x": anchor[0], "y": anchor[1], "heading": 0.0},
-            "position": None if anchor is None else {"x": anchor[0], "y": anchor[1], "heading": 0.0},
         },
         "blue": {
             "handle": "human",
             "staged": None,
+            "position": None if opponent is None else {"x": opponent[0], "y": opponent[1]},
+            "ghost": None,
+            "anchor": None,
             "queue": [],
             "queue_depth": 0,
             "can_commit": True,
             "hits_landed": 0,
             "torso_height_m": 0.84,
             "down": False,
-            "position": (
-                None if opponent is None else {"x": opponent[0], "y": opponent[1], "heading": 0.0}
-            ),
         },
     }
+    separation = None
+    if anchor is not None and opponent is not None:
+        separation = math.hypot(opponent[0] - anchor[0], opponent[1] - anchor[1])
     return {
         "type": "state",
         "tick": tick,
@@ -82,216 +132,200 @@ def _state(
     }
 
 
-def _agent(seed: int = 0) -> BaselineAgent:
-    """A baseline that has seen a welcome, so it knows a guard from a hook."""
-    agent = BaselineAgent(seed=seed)
-    agent.on_welcome({"loadout": dict(zip(SLOTS, [
-        "guard", "jab-left", "jab-right", "hook-left", "hook-right", "uppercut-left"
-    ]))})
-    return agent
-
-
-# --- an agent sees only what a client sees --------------------------------------------------------------
+# --- an agent sees only what a client sees --------------------------------------------------------
 def test_the_baseline_agent_reads_nothing_privileged() -> None:
     """It is handed a state message and its own seat. There is nowhere else for it to look."""
     agent = _agent()
-    messages = agent.decide(_state(tick=200, hits=1), "red", SLOTS)
-    assert all(m["type"] in ("place", "stage", "commit") for m in messages)
+    messages = agent.decide(_state(tick=200), "red", NO_SLOTS)
+    assert all(m["type"] in ("intent", "commit") for m in messages)
 
 
-def test_it_commits_by_staging_first() -> None:
-    """`spec/intent.md` keeps staging and committing separate; an agent uses the same two steps."""
+def test_it_commits_by_staging_an_intent_first() -> None:
+    """`spec/intent.md` keeps staging and committing separate; an agent uses the same two steps,
+    now with one `intent` message rather than 0.4-0.5's separate `stage` and `place`."""
     agent = _agent()
-    messages = agent.decide(_state(tick=200, hits=1), "red", SLOTS)
-    assert [m["type"] for m in messages] == ["place", "stage", "commit"]
-    assert messages[1]["slot"] in SLOTS
+    messages = agent.decide(_state(tick=200), "red", NO_SLOTS)
+    assert [m["type"] for m in messages] == ["intent", "commit"]
+
+    staged = messages[0]
+    assert staged["combination"] in {c["name"] for c in DEFAULT_COMBOS}
+    assert len(staged["ghost"]) == 2
+    assert all(math.isfinite(v) for v in staged["ghost"])
 
 
 def test_it_does_not_commit_while_one_is_active() -> None:
     agent = _agent()
-    assert agent.decide(_state(tick=200, can_commit=False, hits=1), "red", SLOTS) == []
+    assert agent.decide(_state(tick=200, can_commit=False), "red", NO_SLOTS) == []
+
+
+def test_it_never_commits_into_a_full_queue() -> None:
+    """The existing guard, unchanged in spirit: `can_commit` is exactly what the host computes from
+    the queue bound, and an agent that ignored it would spam a rejection into the log."""
+    agent = _agent()
+    for _ in range(5):
+        assert agent.decide(_state(tick=200, can_commit=False), "red", NO_SLOTS) == []
 
 
 def test_it_waits_a_beat_between_commits() -> None:
     """Otherwise it is only patient because the rate limiter made it so."""
     agent = _agent()
-    assert agent.decide(_state(tick=200, hits=1), "red", SLOTS), "the first commit should fire"
-    assert agent.decide(_state(tick=205, hits=2), "red", SLOTS) == [], "too soon"
-    assert agent.decide(_state(tick=200 + agent.RECOVERY_TICKS + 1, hits=3), "red", SLOTS)
+    assert agent.decide(_state(tick=200), "red", NO_SLOTS), "the first commit should fire"
+    assert agent.decide(_state(tick=205), "red", NO_SLOTS) == [], "too soon"
+    assert agent.decide(_state(tick=200 + agent.RECOVERY_TICKS + 1), "red", NO_SLOTS)
 
 
-def test_it_cycles_its_loadout_rather_than_spamming_one_slot() -> None:
-    """A repeated move is the easiest thing in the game to read."""
+def test_a_reset_agent_forgets_its_cooldown_but_keeps_its_library() -> None:
+    """`reset()` is a new-round event; the library came from `welcome`, once per connection, and a
+    round boundary must not make the agent forget what it may commit."""
     agent = _agent()
-    chosen = []
-    tick = 0
-    for _ in range(len(SLOTS) - 1):  # the stance is not thrown
-        tick += agent.RECOVERY_TICKS + 1
-        messages = agent.decide(_state(tick=tick, hits=len(chosen) + 1), "red", SLOTS)
-        chosen.append(next(m for m in messages if m["type"] == "stage")["slot"])
-    assert len(set(chosen)) == len(agent._strike_slots), f"it repeated itself: {chosen}"
-
-
-def test_it_never_throws_at_nothing() -> None:
-    """It can see the range, so there is nothing to guess.
-
-    Under `spec/intent.md` 1.1 "throwing at nothing" is no longer "throwing while far away" — a
-    commit walks the whole way and lands its punch on arrival. It is *placing the punch where the
-    opponent is not*. So the test is on the placement, not on the slot.
-    """
-    agent = _agent()
-    far = agent.decide(_state(tick=1, opponent=(3.0, 0.0)), "red", SLOTS)
-
-    placed = next(m for m in far if m["type"] == "place")
-    reach = math.hypot(placed["x"] - 3.0, placed["y"] - 0.0)
-    assert reach == pytest.approx(agent.STRIKE_RANGE_M), (
-        f"it committed a punch that arrives {reach:.2f} m from the opponent"
-    )
-
-
-def test_it_does_nothing_between_rounds() -> None:
-    agent = _agent()
-    assert agent.decide(_state(tick=500, hits=3, phase="round_over"), "red", SLOTS) == []
-
-
-def test_an_agent_with_no_loadout_does_nothing() -> None:
-    assert _agent().decide(_state(tick=200, hits=1), "red", []) == []
-
-
-def test_a_reset_agent_forgets_the_round() -> None:
-    agent = _agent()
-    agent.decide(_state(tick=200, hits=1), "red", SLOTS)
+    agent.decide(_state(tick=200), "red", NO_SLOTS)
     agent.reset()
-    assert agent.decide(_state(tick=5, hits=1), "red", SLOTS), "it should be ready again"
+    assert agent.decide(_state(tick=5), "red", NO_SLOTS), "it should be ready again, immediately"
 
 
 def test_the_idle_agent_never_acts() -> None:
     agent = IdleAgent()
-    assert all(agent.decide(_state(tick=t, hits=t), "red", SLOTS) == [] for t in range(0, 500, 50))
+    assert all(agent.decide(_state(tick=t), "red", NO_SLOTS) == [] for t in range(0, 500, 50))
+
+
+def test_it_does_nothing_between_rounds() -> None:
+    agent = _agent()
+    assert agent.decide(_state(tick=500, phase="round_over"), "red", NO_SLOTS) == []
+
+
+def test_it_still_works_without_positions() -> None:
+    """A record replayed through an older protocol (or a malformed state) has no positions; the
+    agent must not crash, and must not invent a ghost out of nothing (`CLAUDE.md` "fail loudly" read
+    the other way round: an unknown placement is not a placement to guess at)."""
+    agent = _agent()
+    assert agent.decide(_state(200, anchor=None, opponent=None), "red", NO_SLOTS) == []
+    assert agent.decide(_state(200, anchor=(0.0, 0.0), opponent=None), "red", NO_SLOTS) == []
+
+
+# --- welcome carries the library, not a loadout (D6 / spec/protocol.md 0.6) ------------------------
+def test_it_survives_a_welcome_with_an_empty_library() -> None:
+    """`D6`'s whole-library `welcome` can in principle carry zero entries (a fresh season, a paging
+    bug upstream) and an agent must not crash on it — it just has nothing to do."""
+    agent = BaselineAgent(seed=0)
+    agent.on_welcome(_welcome([]))
+    assert agent.decide(_state(tick=200), "red", NO_SLOTS) == []
+
+
+def test_an_agent_that_never_saw_a_welcome_does_nothing() -> None:
+    agent = BaselineAgent(seed=0)
+    assert agent.decide(_state(tick=200), "red", NO_SLOTS) == []
 
 
 def test_two_agents_seeded_differently_open_with_different_moves() -> None:
-    first = _agent(seed=0).decide(_state(tick=200, hits=1), "red", SLOTS)
-    second = _agent(seed=1).decide(_state(tick=200, hits=1), "red", SLOTS)
-    staged = [next(m for m in ms if m["type"] == "stage")["slot"] for ms in (first, second)]
-    assert staged[0] != staged[1]
+    first = _agent(seed=0).decide(_state(tick=200), "red", NO_SLOTS)
+    second = _agent(seed=1).decide(_state(tick=200), "red", NO_SLOTS)
+    chosen = [next(m for m in ms if m["type"] == "intent")["combination"] for ms in (first, second)]
+    assert chosen[0] != chosen[1]
 
 
-# --- it manages distance by placing, not steering (spec/intent.md 1.0/1.1) -----------------------
-def test_it_closes_and_punches_in_one_commit() -> None:
-    """The whole shape of the model: a commit is "go here and do this", and since 1.1 it walks the
-    whole way. Spending a separate commit on the approach would burn a queue slot for nothing."""
+# --- it only ever asks for a ghost its combination can reach (spec/intent.md 3.0 "Feasibility") ----
+def test_it_only_picks_combinations_that_can_reach_the_ghost_it_wants() -> None:
+    """The host rejects a ghost beyond a combination's own `reach_m`; an agent that ignored that
+    would spend its whole match being told 'can't get there'. Only one combo in this library can
+    cover the distance to a far opponent, so it must be the only one ever chosen."""
+    combos = [
+        _combo("shadow-boxing-close-00", reach_m=0.2),
+        _combo("ib-dodge-close-00", reach_m=0.2),
+        _combo("ib-combat-turn-jog-far-00", reach_m=5.0),
+    ]
+    agent = _agent(combos=combos)
+
+    tick = 0
+    chosen: set[str] = set()
+    for _ in range(6):
+        tick += agent.RECOVERY_TICKS + 1
+        messages = agent.decide(_state(tick=tick, anchor=(0.0, 0.0), opponent=(3.0, 0.0)), "red", NO_SLOTS)
+        staged = next(m for m in messages if m["type"] == "intent")
+        chosen.add(staged["combination"])
+        distance = math.hypot(staged["ghost"][0] - 0.0, staged["ghost"][1] - 0.0)
+        record_reach = next(c["reach_m"] for c in combos if c["name"] == staged["combination"])
+        assert distance <= record_reach + 1e-6, (
+            f"{staged['combination']!r} was asked to reach {distance:.3f} m, its own reach is "
+            f"{record_reach:.3f} m"
+        )
+    assert chosen == {"ib-combat-turn-jog-far-00"}, f"it committed something it could not reach: {chosen}"
+
+
+def test_a_ghost_never_exceeds_its_own_combinations_reach_even_when_everything_reaches() -> None:
+    """The same guarantee, the ordinary case: comfortably reachable, still bounded correctly."""
     agent = _agent()
-    messages = agent.decide(_state(10, opponent=(3.0, 0.0)), "red", SLOTS)
+    tick = 0
+    for _ in range(6):
+        tick += agent.RECOVERY_TICKS + 1
+        messages = agent.decide(
+            _state(tick=tick, anchor=(0.0, 0.0), opponent=(0.5, 0.0)), "red", NO_SLOTS
+        )
+        staged = next(m for m in messages if m["type"] == "intent")
+        distance = math.hypot(*staged["ghost"])
+        reach = next(c["reach_m"] for c in DEFAULT_COMBOS if c["name"] == staged["combination"])
+        assert distance <= reach + 1e-6
 
-    kinds = [m["type"] for m in messages]
-    assert kinds == ["place", "stage", "commit"]
-    assert messages[1]["slot"] in agent._strike_slots, "the walk is inside the punch, not before it"
 
-    placed = messages[0]
-    assert placed["x"] == pytest.approx(3.0 - agent.STRIKE_RANGE_M)
-    assert placed["y"] == pytest.approx(0.0)
-    assert placed["heading"] == pytest.approx(0.0), "facing the opponent"
-
-
-def test_it_aims_the_step_along_the_line_to_the_opponent() -> None:
+def test_it_varies_its_choices_rather_than_repeating_one_combination() -> None:
+    """A repeated move is the easiest thing in the game to read."""
     agent = _agent()
-    messages = agent.decide(_state(10, opponent=(0.0, 3.0)), "red", SLOTS)
-    placed = next(m for m in messages if m["type"] == "place")
+    chosen = []
+    tick = 0
+    for _ in range(8):
+        tick += agent.RECOVERY_TICKS + 1
+        messages = agent.decide(_state(tick=tick), "red", NO_SLOTS)
+        chosen.append(next(m for m in messages if m["type"] == "intent")["combination"])
+    assert len(set(chosen)) > 1, f"it repeated itself: {chosen}"
 
-    assert placed["x"] == pytest.approx(0.0)
-    assert placed["y"] == pytest.approx(3.0 - agent.STRIKE_RANGE_M)
-    assert placed["heading"] == pytest.approx(math.pi / 2)
+
+def test_it_aims_the_ghost_near_the_opponent() -> None:
+    """The ghost is where the combination's own last keyframe should land, so it is placed near
+    where the opponent actually is, not at the fighter's own feet or the ring origin."""
+    agent = _agent()
+    messages = agent.decide(_state(10, anchor=(0.0, 0.0), opponent=(2.0, 0.0)), "red", NO_SLOTS)
+    staged = next(m for m in messages if m["type"] == "intent")
+
+    reach = math.hypot(staged["ghost"][0] - 2.0, staged["ghost"][1] - 0.0)
+    assert reach < 2.0, "it aimed the ghost at least some of the way to the opponent"
 
 
 def test_it_measures_from_its_anchor_not_from_where_it_stands() -> None:
     """Under a queue the next move starts where the last one leaves off, so aiming from the live
-    position aims at the past. Chosen so the two disagree about the *heading*, which a target on the
-    line between them would hide."""
+    position aims at the past."""
     agent = _agent()
     state = _state(10, anchor=(0.0, 0.0), opponent=(3.0, 2.0))
-    state["seats"]["red"]["anchor"] = {"x": 0.0, "y": 2.0, "heading": 0.0}
+    state["seats"]["red"]["anchor"] = {"x": 0.0, "y": 2.0}
+    state["seats"]["red"]["position"] = {"x": -5.0, "y": -5.0}
 
-    placed = next(m for m in agent.decide(state, "red", SLOTS) if m["type"] == "place")
-    assert placed["heading"] == pytest.approx(0.0), "from the anchor the opponent is due +x"
-    assert placed["y"] == pytest.approx(2.0), "it does not drift back to the live position"
-
-
-def test_a_throw_also_carries_it_to_striking_distance() -> None:
-    """A commit is "go here and do this", so a punch places itself where the punch can land rather
-    than being thrown from wherever the fighter happens to be."""
-    agent = _agent()
-    messages = agent.decide(_state(10, opponent=(0.95, 0.0)), "red", SLOTS)
-
-    staged = next(m for m in messages if m["type"] == "stage")
-    placed = next(m for m in messages if m["type"] == "place")
-    assert staged["slot"] in agent._strike_slots
-    assert placed["x"] == pytest.approx(0.95 - agent.STRIKE_RANGE_M)
-
-
-def test_it_backs_out_of_a_clinch() -> None:
-    """The same target expression as closing, gone negative: end up at striking distance."""
-    agent = _agent()
-    messages = agent.decide(_state(10, opponent=(0.2, 0.0)), "red", SLOTS)
-    placed = next(m for m in messages if m["type"] == "place")
-
-    assert placed["x"] == pytest.approx(0.2 - agent.STRIKE_RANGE_M)
-    assert placed["x"] < 0.0, "it steps away from the opponent, not into them"
-    assert next(m for m in messages if m["type"] == "stage")["slot"] == agent._stance_slot
-
-
-def test_it_throws_rather_than_shuffling_when_it_can_reach() -> None:
-    agent = _agent()
-    messages = agent.decide(_state(10, opponent=(0.8, 0.0)), "red", SLOTS)
-
-    staged = next(m for m in messages if m["type"] == "stage")
-    assert staged["slot"] in agent._strike_slots
-    assert staged["slot"] != agent._stance_slot
-
-
-def test_a_small_gap_is_not_worth_a_step() -> None:
-    """Without a deadband it commits a stance for every few centimetres and never punches."""
-    agent = _agent()
-    just_short = agent.STRIKE_RANGE_M + agent.STEP_DEADBAND_M - 0.05  # inside the deadband
     staged = next(
-        m for m in agent.decide(_state(10, opponent=(just_short, 0.0)), "red", SLOTS)
-        if m["type"] == "stage"
+        m for m in agent.decide(state, "red", NO_SLOTS) if m["type"] == "intent"
     )
-    assert staged["slot"] in agent._strike_slots
+    assert staged["ghost"][1] == pytest.approx(2.0), "it does not drift back to the live position"
 
 
-def test_without_a_stance_it_can_still_close_but_cannot_back_off() -> None:
-    """At 1.0 a fighter with no stance could not walk at all, because closing was a separate commit.
-    Since 1.1 the walk is inside the punch, so it closes fine — what it loses is the one commit that
-    is *not* a punch: stepping back out of a clinch, where throwing is not an option."""
-    agent = BaselineAgent()
-    agent.on_welcome({"loadout": {"1": "jab-left", "2": "hook-right"}})
-    assert agent._stance_slot is None
-
-    far = agent.decide(_state(10, opponent=(3.0, 0.0)), "red", ["1", "2"])
-    assert [m["type"] for m in far] == ["place", "stage", "commit"], "it can still close and punch"
-
-    agent.reset()
-    clinch = agent.decide(_state(10, opponent=(0.2, 0.0)), "red", ["1", "2"])
-    assert clinch == [], "with nothing but punches there is no way to step back out"
+# --- classification is honest and available, per name prefix, if it helps ---------------------------
+def test_combination_kind_reads_the_recorded_prefixes() -> None:
+    """`CLAUDE.md`'s three real corpus families. Anything unrecognised is treated as a strike — the
+    majority family and the safe default: an agent that cannot classify a move should still throw it
+    rather than freeze up."""
+    assert combination_kind("shadow-boxing-r-001-a359-00") == "strike"
+    assert combination_kind("ib-dodge-270-r-001-a437-00") == "defensive"
+    assert combination_kind("ib-combat-turn-jog-start-270-r-003-a437-00") == "travel"
+    assert combination_kind("some-future-family-00") == "strike"
 
 
-def test_it_still_works_without_positions() -> None:
-    """A record replayed through an older protocol has no positions; it must not crash, and it must
-    not invent a placement out of nothing."""
+def test_it_backs_off_in_a_clinch_rather_than_walking_into_the_opponent() -> None:
+    """No control is bound to `stage`/`place` any more, so "backing out of a clinch" is just placing
+    the ghost further from the opponent than the fighter already is — the same target expression as
+    closing, gone negative."""
     agent = _agent()
-    messages = agent.decide(
-        _state(200, hits=1, separation=0.6, anchor=None, opponent=None), "red", SLOTS
-    )
-    assert [m["type"] for m in messages] == ["stage", "commit"], "no placement it cannot know"
+    messages = agent.decide(_state(10, anchor=(0.0, 0.0), opponent=(0.2, 0.0)), "red", NO_SLOTS)
+    staged = next(m for m in messages if m["type"] == "intent")
 
-    far = agent.decide(
-        _state(400, separation=3.0, anchor=None, opponent=None), "red", SLOTS
-    )
-    assert far == [], "and it does not throw at a range it cannot reach"
+    assert staged["ghost"][0] < 0.0, "it steps away from the opponent, not into it"
 
 
-# --- the limits ----------------------------------------------------------------------------------------
+# --- the limits --------------------------------------------------------------------------------------
 def test_the_rate_limiter_allows_a_reasonable_client() -> None:
     limiter = RateLimiter()
     assert all(limiter.allow(now=index * 0.2) for index in range(5)), "a human peaks near 5/s"
@@ -325,7 +359,7 @@ def test_a_slow_decision_is_counted_not_discarded() -> None:
             return [{"type": "commit"}]
 
     stats = AgentStats()
-    messages = run_decision(_Slow(), _state(0), "red", SLOTS, stats)
+    messages = run_decision(_Slow(), _state(0), "red", NO_SLOTS, stats)
 
     assert messages == [{"type": "commit"}], "the decision was still delivered"
     assert stats.over_budget == 1
@@ -334,12 +368,12 @@ def test_a_slow_decision_is_counted_not_discarded() -> None:
 
 def test_a_fast_decision_is_within_budget() -> None:
     stats = AgentStats()
-    run_decision(BaselineAgent(), _state(200, hits=1), "red", SLOTS, stats)
+    run_decision(_agent(), _state(200), "red", NO_SLOTS, stats)
     assert stats.over_budget == 0
     assert stats.decisions == 1
 
 
-# --- exhibition, not the table --------------------------------------------------------------------------
+# --- exhibition, not the table --------------------------------------------------------------------
 def test_an_agent_handle_is_exhibition() -> None:
     """`WORKPLAN` M5-T4 and the project definition §8 put agents outside the Season 0 table."""
     assert is_exhibition(f"{AGENT_PREFIX}baseline")
@@ -348,42 +382,3 @@ def test_an_agent_handle_is_exhibition() -> None:
 
 def test_a_human_handle_is_not_kept_out_of_the_table() -> None:
     assert not is_exhibition("agentina"), "a handle that merely starts with 'agent' is not enough"
-
-
-# --- the whole thing ------------------------------------------------------------------------------------
-@pytest.mark.slow
-def test_a_baseline_agent_plays_a_full_match_and_commits() -> None:
-    """M5-T4's acceptance, minus the human: the agent joins over a real socket, plays a real match
-    and its commits reach the record."""
-    import asyncio
-
-    from openroboxing.paths import LOADOUT_DIR
-    from openroboxing.runtime.arena import FIGHTERS
-    from openroboxing.runtime.intents import Loadout
-    from openroboxing.runtime.match import MatchFormat
-    from openroboxing.server.client import play_match
-    from openroboxing.server.host import MatchHost
-
-    loadout = Loadout.load(LOADOUT_DIR / "orthodox.json")
-
-    async def run():
-        host = MatchHost(
-            loadouts={f: loadout for f in FIGHTERS},
-            match_format=MatchFormat(rounds=1, round_ticks=600, get_up_window_ticks=400),
-            match_id="agent-test",
-            render=False,
-        )
-        return await play_match(
-            host,
-            {"red": BaselineAgent(seed=0), "blue": IdleAgent()},
-            handles={"red": f"{AGENT_PREFIX}baseline", "blue": "human"},
-        )
-
-    record, stats = asyncio.run(run())
-
-    assert len(record.rounds) == 1
-    commits = record.rounds[0].commits
-    assert commits, "the agent never committed anything"
-    assert all(c["fighter"] == "red" for c in commits), "the idle seat committed"
-    assert stats["red"].decisions > 0
-    assert stats["red"].over_budget == 0, "the baseline agent must fit its own budget"

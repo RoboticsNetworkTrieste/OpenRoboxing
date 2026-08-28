@@ -1,9 +1,16 @@
-"""The agent API: a program in a seat (M5-T4).
+"""The agent API: a program in a seat (M5-T4; :class:`BaselineAgent` rewritten for combinations).
 
 An agent is **just a client**. It speaks ``spec/protocol.md`` over the same websocket a browser uses,
 sees exactly what a human sees, and is subject to the same rules. `WORKPLAN` M5-T4: "same intent
 structure over the same transport", which is what makes human-vs-agent exhibitions and imitation
 learning from human matches free rather than a separate integration.
+
+:class:`BaselineAgent` is a placeholder opponent, not a trained one
+---------------------------------------------------------------------
+It exists so a human — or another script — has something to hit while the real opponent stays a
+research track (`WORKPLAN` M5): nothing here is learned, every choice is a hand-written heuristic
+read straight off ``welcome``'s combination library, and it should be obvious from reading
+:meth:`BaselineAgent.decide` what it does and why. Beating it is a low bar on purpose.
 
 Out of process, on purpose
 --------------------------
@@ -109,36 +116,70 @@ class Agent(Protocol):
         """A new round is starting."""
 
     def decide(self, state: dict[str, Any], seat: str, slots: Sequence[str]) -> list[dict]:
-        """Zero or more client messages, given one ``state`` frame."""
+        """Zero or more client messages, given one ``state`` frame.
+
+        ``slots`` is what the loadout era called a fighter's dealt pose names; a combination has
+        none to name any more (`spec/intent.md` `D6`). It survives here only so `run_decision` and
+        `server/client.py`'s ``AgentConnection`` — which still pass it — do not need a second call
+        shape; an :class:`Agent` that has moved on to reading ``welcome``'s library, as
+        :class:`BaselineAgent` has, is free to ignore it.
+        """
 
 
-#: Pose names that move a fighter without throwing anything. A commit needs *some* pose, and closing
-#: distance means committing a stance at a spot rather than a punch (`spec/intent.md` 1.0).
-STANCE_POSES = ("guard", "cover")
+#: A combination's own name, as `tools/import_motions.py::build_from_take` slugs it from the take
+#: that produced it — e.g. ``shadow-boxing-r-001-a359-00``, ``ib-dodge-270-r-001-a437-00``,
+#: ``ib-combat-turn-jog-start-270-r-003-a437-00``. These are the three families in the corpus under
+#: `motions/` today (`CLAUDE.md`); a name outside all three is classified ``"strike"``, both because
+#: that family is the corpus majority and because an agent that cannot classify a move should still
+#: throw it rather than freeze up over a name it does not recognise.
+_DEFENSIVE_PREFIXES = ("ib-dodge",)
+_TRAVEL_PREFIXES = ("ib-combat-turn-jog",)
+
+
+def combination_kind(name: str) -> str:
+    """``"defensive"``, ``"travel"`` or ``"strike"`` — read from a combination's own name.
+
+    A move's name is honest about what it is (the corpus is authored, not generated, so the prefix
+    is not a guess); reading it is a legitimate, cheap way to pick sensibly and is as far as
+    :class:`BaselineAgent` goes with it — anything cleverer than "prefer not to throw a haymaker
+    while stuck in a clinch" is out of scope for a placeholder opponent.
+    """
+    if name.startswith(_DEFENSIVE_PREFIXES):
+        return "defensive"
+    if name.startswith(_TRAVEL_PREFIXES):
+        return "travel"
+    return "strike"
 
 
 class BaselineAgent:
-    """The reference opponent: it walks in, it throws, it varies, and it does not punch the air.
+    """The reference opponent: it commits, it varies, and it never asks for a ghost it cannot reach.
 
     Deliberately simple and deliberately *legible* — this is the thing a submitted agent must beat,
     so it should be obvious what it does:
 
-    - It aims every punch at striking distance, judged from the same ``CONTACT_RANGE_M`` scoring uses.
-    - It cycles its strikes rather than spamming one slot, because a repeated move is the easiest
-      thing in the game to read.
+    - It aims every commit at striking distance from the opponent, judged from the same standoff a
+      human would want.
+    - It cycles through the combinations that can actually cover that distance, rather than spamming
+      one, because a repeated move is the easiest thing in the game to read.
     - It waits a beat between commits, so it is not merely rate-limited into looking patient.
 
-    Distance under the queued model
-    -------------------------------
-    There is no steering to do: **a commit is "go here and do this"**, and since ``spec/intent.md``
-    1.1 it walks the whole way rather than one plan's worth. So the agent does not close and then
-    punch as two commits — it aims every punch at striking distance from the opponent and lets the
-    walk happen inside the commit. Only backing out of a clinch spends a commit on a stance, because
-    throwing while retreating is not a punch anybody lands.
+    Choosing under `spec/intent.md` 3.0's reach guard
+    ----------------------------------------------------
+    A commit is "play this recording, landing its last pose on the ghost" (`spec/intent.md` 3.0), and
+    a combination's own recorded duration bounds how far its ghost may sit from the anchor
+    (``reach_m``, `spec/protocol.md` §"welcome's combination library"). The host refuses a ghost
+    beyond that bound outright — there is no partial credit, no "it gets as close as it can" — so an
+    agent that ignored ``reach_m`` would spend its whole match being told "can't get there"
+    (`server/protocol.py::check_reach`), which is a much worse opponent than one that simply cannot
+    reach as far as a human might place a ghost.
+
+    :meth:`decide` therefore always filters the library to combinations whose own ``reach_m`` covers
+    the distance it wants to travel before choosing one, and never asks for more than the one it
+    picked can give — see :meth:`_choose`.
 
     It measures from its **anchor** — where its queue leaves it — rather than from where it is
-    standing now, because that is where its next move actually starts. ``separation_m`` is the
-    fallback for a state that carries no positions.
+    standing now, because that is where its next move actually starts (unchanged in spirit since the
+    loadout era; `spec/protocol.md`'s ``anchor`` is exactly this).
     """
 
     #: Ticks to wait after a commit before offering another. Not a cooldown on the fighter — the
@@ -146,45 +187,46 @@ class BaselineAgent:
     #: and then spend four seconds unable to react.
     RECOVERY_TICKS = 25
 
-    #: Close to this, in metres. Two fighters standing settle at 0.99 m and the scorer's contact
-    #: range is 0.80 m, so this is just inside reach.
+    #: The standoff this agent aims for, in metres. Two fighters standing settle at 0.99 m and the
+    #: scorer's contact range is 0.80 m, so this is just inside reach.
     STRIKE_RANGE_M = 0.75
 
-    #: Close enough that a punch is worth throwing at the scalar-range fallback, where no positions
-    #: are available to aim a placement with.
-    STEP_DEADBAND_M = 0.25
-
-    #: Back off when closer than this: at a third of a metre the fighters are inside each other's
+    #: Back off when closer than this: at under half a metre the fighters are inside each other's
     #: arms and it stops being boxing.
     CLINCH_RANGE_M = 0.45
 
+    #: Shaved off a combination's advertised ``reach_m`` before it is trusted. ``reach_m`` arrives
+    #: over the wire already rounded to 3 d.p. (`server/protocol.py::welcome`); this agent recomputes
+    #: nothing server-side, so a ghost placed at the rounded boundary could round the wrong way and
+    #: trip the host's own, unrounded check. A 2 cm margin costs nothing a human would notice and
+    #: means this agent's own placements never test that edge.
+    REACH_MARGIN_M = 0.02
+
     def __init__(self, seed: int = 0) -> None:
         self.seed = seed
-        self._stance_slot: str | None = None
-        self._strike_slots: list[str] = []
+        self._library: dict[str, dict[str, Any]] = {}
         self.reset()
 
     def reset(self) -> None:
+        """A new round. Forgets its cooldown and its place in the cycle — **not** the library, which
+        came from ``welcome`` once per connection and does not change round to round."""
         self._index = self.seed
         self._last_commit_tick = -10_000
 
     def on_welcome(self, message: Mapping[str, Any]) -> None:
-        """Learn which slot is a stance and which are strikes, from the loadout it was dealt.
+        """Learn the whole shared combination library (`spec/protocol.md` 0.6's ``welcome``).
 
         Optional in the :class:`Agent` protocol — an agent that does not care never defines it. This
-        one does, because "walk over there" and "hit them" are different poses and it has to tell
-        them apart without hard-coding a slot number.
+        one does, because every choice it makes reads straight off what a client would show a human:
+        ``name``, ``reach_m`` and ``heading_delta`` per entry (`spec/intent.md`'s `D6`: the whole
+        library, not a per-seat loadout, so there is nothing to be dealt).
         """
-        loadout = dict(message.get("loadout") or {})
-        self._stance_slot = next(
-            (slot for slot, name in sorted(loadout.items()) if name in STANCE_POSES), None
-        )
-        self._strike_slots = [
-            slot for slot, name in sorted(loadout.items()) if name not in STANCE_POSES
-        ]
+        self._library = {
+            str(c["name"]): dict(c) for c in message.get("combinations") or []
+        }
 
     def _reach(self, state: Mapping[str, Any], seat: str):
-        """``(distance, (ux, uy), (ox, oy))`` from this fighter's anchor to the opponent, or ``None``.
+        """``(distance, (ux, uy), (ax, ay))`` from this fighter's anchor to the opponent, or ``None``.
 
         Measured from the **anchor**, not the live position: under a queue the next move starts where
         the last one leaves off, so aiming at where the fighter *is* aims at the past.
@@ -201,31 +243,48 @@ class BaselineAgent:
         if not origin or not target:
             return None
 
-        ox, oy = float(origin["x"]), float(origin["y"])
-        dx = float(target["x"]) - ox
-        dy = float(target["y"]) - oy
+        ax, ay = float(origin["x"]), float(origin["y"])
+        dx = float(target["x"]) - ax
+        dy = float(target["y"]) - ay
         distance = math.hypot(dx, dy)
         if distance < 1e-6:
-            return distance, (1.0, 0.0), (ox, oy)
-        return distance, (dx / distance, dy / distance), (ox, oy)
+            return distance, (1.0, 0.0), (ax, ay)
+        return distance, (dx / distance, dy / distance), (ax, ay)
 
-    def _next_strike(self, slots: Sequence[str]) -> str | None:
-        """The next punch in the cycle.
+    def _choose(self, needed_m: float, *, prefer: tuple[str, ...] = ()) -> tuple[str, float] | None:
+        """The next combination to play, and the reach it actually offers.
 
-        Falls back to every slot when no welcome told it which are stances — an agent that has not
-        been dealt a loadout should still fight, rather than stand there because a hook it never
-        heard about might be a guard.
+        Only ever returns one whose ``reach_m`` can cover ``needed_m`` — unless *nothing* in the
+        library can, in which case it returns whichever reaches furthest rather than refusing to act
+        at all, so a fighter placed well outside every combination's reach still throws something
+        instead of standing there (the ghost is then clamped short in :meth:`decide`, never past what
+        was chosen). ``prefer`` narrows the pool to a `combination_kind` first, when at least one
+        candidate in it still reaches — used to favour stepping out of a clinch over swinging into it.
         """
-        choices = self._strike_slots or list(slots)
-        if not choices:
+        if not self._library:
             return None
-        slot = choices[self._index % len(choices)]
+
+        names = sorted(self._library)
+        eligible = [n for n in names if self._library[n]["reach_m"] >= needed_m]
+        pool = eligible or names
+
+        if prefer:
+            narrowed = [n for n in pool if combination_kind(n) in prefer]
+            if narrowed:
+                pool = narrowed
+
+        if not eligible:
+            # Nothing reaches: take whichever goes furthest, out of the (possibly `prefer`-narrowed)
+            # pool, so the fallback is still the best available answer rather than an arbitrary one.
+            name = max(pool, key=lambda n: self._library[n]["reach_m"])
+        else:
+            name = pool[self._index % len(pool)]
         self._index += 1
-        return slot
+        return name, float(self._library[name]["reach_m"])
 
     def decide(self, state: dict[str, Any], seat: str, slots: Sequence[str]) -> list[dict]:
         me = state.get("seats", {}).get(seat)
-        if not me or not slots or state.get("phase") != "fighting":
+        if not me or not self._library or state.get("phase") != "fighting":
             return []
         if not me.get("can_commit", False):
             return []
@@ -236,42 +295,33 @@ class BaselineAgent:
 
         reach = self._reach(state, seat)
         if reach is None:
-            # No positions (an older protocol, or a replay). Fall back to the scalar range and only
-            # throw when it says the opponent is reachable; never guess a placement from nothing.
-            separation = state.get("separation_m")
-            if separation is None or separation > self.STRIKE_RANGE_M + self.STEP_DEADBAND_M:
-                return []
-            return self._commit(tick, self._next_strike(slots), placement=None)
-
-        distance, (ux, uy), (ox, oy) = reach
-
-        # One target serves both jobs, because a commit is "go here **and** do this": end up at
-        # striking distance from the opponent. Further away that closes the gap; inside a clinch the
-        # same expression is negative and steps back out.
-        travel = distance - self.STRIKE_RANGE_M
-        placement = (ox + ux * travel, oy + uy * travel, math.atan2(uy, ux))
-
-        # No "close first, punch second". The commit walks there and throws on arrival, however far
-        # that is, so spending a separate commit on the approach would only cost a queue slot.
-        clinched = distance < self.CLINCH_RANGE_M
-        slot = self._stance_slot if clinched else self._next_strike(slots)
-        return self._commit(tick, slot, placement)
-
-    def _commit(self, tick: int, slot: str | None, placement) -> list[dict]:
-        """Place, stage, commit. A missing slot means it cannot act, and it says so by doing nothing.
-
-        With no stance in the loadout it genuinely cannot walk — and committing a hook to cover
-        ground would score as aggression it never earned, so refusing is the honest answer.
-        """
-        if slot is None:
+            # No positions (an older protocol, or a malformed state). Never guess a ghost from
+            # nothing (`CLAUDE.md` "fail loudly", read the other way round).
             return []
-        self._last_commit_tick = tick
+        distance, (ux, uy), (ax, ay) = reach
 
-        messages: list[dict] = []
-        if placement is not None:
-            x, y, heading = placement
-            messages.append({"type": "place", "x": x, "y": y, "heading": heading})
-        return messages + [{"type": "stage", "slot": slot}, {"type": "commit"}]
+        # One signed target serves both jobs, because a commit is "go here **and** do this": end up
+        # at striking distance from the opponent. Further away that closes the gap; inside a clinch
+        # the same expression is negative and steps back out.
+        travel = distance - self.STRIKE_RANGE_M
+        clinched = distance < self.CLINCH_RANGE_M
+
+        choice = self._choose(
+            abs(travel), prefer=("defensive", "travel") if clinched else ()
+        )
+        if choice is None:
+            return []
+        name, reach_m = choice
+
+        # Never ask for more than the chosen combination can give, even when nothing in the library
+        # could cover the original target — this is what keeps `check_reach` from ever refusing this
+        # agent's own commit (`spec/intent.md` "Feasibility").
+        budget = max(0.0, reach_m - self.REACH_MARGIN_M)
+        clamped = max(-budget, min(budget, travel))
+        ghost = (ax + ux * clamped, ay + uy * clamped)
+
+        self._last_commit_tick = tick
+        return [{"type": "intent", "combination": name, "ghost": list(ghost)}, {"type": "commit"}]
 
 
 class IdleAgent:
