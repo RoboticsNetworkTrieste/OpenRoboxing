@@ -1,6 +1,6 @@
-"""The match host: one process, one match, two clients (M4-T2).
+"""The match host: one process, one match, two clients (M4-T2; rewritten for combinations, M6-T8).
 
-Implements ``spec/protocol.md`` v0.4 over aiohttp websockets. The host owns the match; a client is a
+Implements ``spec/protocol.md`` v0.6 over aiohttp websockets. The host owns the match; a client is a
 view and a keyboard and is never trusted.
 
 Three clocks, deliberately different
@@ -19,29 +19,30 @@ the fight speed up after a stall, which is worse than a stutter. It drops the de
 Every viewer gets its own state
 -------------------------------
 `spec/protocol.md` 0.4 makes the **JSON** per viewer, because it carries things one seat may see and
-another may not: your staged slot and your queued-but-unstarted commits. Broadcasting one message to
-every socket would hand the opponent a readable list of your next four moves, which is precisely the
-risk queueing is supposed to be. So the subscriber map records the seat each socket is watching as,
-and :meth:`MatchHost.broadcast_state` composes the JSON per recipient.
+another may not: your staged combination and your queued-but-unstarted commits. Broadcasting one
+message to every socket would hand the opponent a readable list of your next four moves, which is
+precisely the risk queueing is supposed to be. So the subscriber map records the seat each socket is
+watching as, and :meth:`MatchHost.broadcast_state` composes the JSON per recipient.
 
 The **binary frame is not** per viewer: it holds the two real fighters and nothing else, so it is
 packed once and sent to the whole room. The shadow a player aims with is drawn in the browser and the
-host never sees it — it learns a placement only when one is committed.
+host never sees it — it learns a ghost only when one is committed.
 """
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
 import time
-from typing import Any
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from openroboxing.runtime.arena import FIGHTERS, ArenaConfig
 from openroboxing.runtime.contact import ContactTracker, FightTrace
 from openroboxing.runtime.fight import FightWorld, Pilot
-from openroboxing.runtime.intents import IntentError, IntentTimeline, Loadout, Placement
+from openroboxing.runtime.intents import IntentError, IntentTimeline
 from openroboxing.runtime.match import (
     KnockdownDetector,
     MatchFormat,
@@ -57,6 +58,9 @@ from openroboxing.spec.constants import (
     TICK_DT,
     TICK_HZ,
 )
+
+if TYPE_CHECKING:  # keep `studio` out of this module's eager import graph, as `runtime/` does.
+    from openroboxing.studio.combination_record import CombinationRecord
 
 #: Client-facing rates, from `WORKPLAN` M4-T2.
 STREAM_FPS = 30
@@ -105,19 +109,20 @@ class QueuedPilot:
     Keypresses land in a queue and are applied on the intent tick, never inside the socket handler —
     so a client cannot make the simulation wait, and two clients cannot interleave into the same
     timeline mid-step.
+
+    Simpler than 0.4-0.5's version, and deliberately so: a ghost used to default to "wherever the
+    queue leaves you" when a player committed without touching the shadow, which needed this class to
+    track its own notion of an anchor. Since `spec/intent.md` 3.0 (`D5`/`D6`) the ghost is always an
+    absolute world position the client computed and sent explicitly with the ``intent`` message that
+    staged it, so there is nothing left here to default.
     """
 
     def __init__(self) -> None:
         self._pending: list[dict[str, Any]] = []
         self.last_error: str | None = None
+        #: The combination last staged, purely for :meth:`MatchHost.seat_states` to echo back — the
+        #: timeline's own :attr:`~openroboxing.runtime.intents.IntentTimeline.staged` is the truth.
         self.staged: str | None = None
-        #: Where the client last put its shadow, in world coordinates. ``None`` means it has not
-        #: moved the shadow since its last commit, which is a real answer: "do this where I will be".
-        self.placement: Placement | None = None
-        #: Where the queue leaves this fighter. Written by the host each tick before it steps, so a
-        #: commit made without touching the shadow lands at the anchor rather than at whatever
-        #: absolute point the *previous* commit happened to use.
-        self.anchor: Placement | None = None
 
     def queue(self, message: dict[str, Any]) -> None:
         self._pending.append(message)
@@ -125,8 +130,6 @@ class QueuedPilot:
     def reset(self) -> None:
         self._pending.clear()
         self.staged = None
-        self.placement = None
-        self.anchor = None
         self.last_error = None
 
     def act(self, timeline: IntentTimeline, tick: int) -> None:
@@ -134,29 +137,14 @@ class QueuedPilot:
         pending, self._pending = self._pending, []
         for message in pending:
             try:
-                if message["type"] == "stage":
-                    timeline.stage(pose_slot=message["slot"])
-                    self.staged = message["slot"]
+                if message["type"] == "intent":
+                    timeline.stage(combination=message["combination"], ghost=message["ghost"])
+                    self.staged = message["combination"]
                 elif message["type"] == "clear":
-                    timeline.clear_pose()
+                    timeline.clear_combination()
                     self.staged = None
-                elif message["type"] == "place":
-                    placement = Placement(
-                        position=(message["x"], message["y"]), heading=message["heading"]
-                    )
-                    timeline.stage(placement=placement)
-                    self.placement = placement
                 elif message["type"] == "commit":
-                    if timeline.staged.pose_slot is None:
-                        raise IntentError("nothing is staged")
-                    # An untouched shadow commits at the anchor. Resolving it here rather than
-                    # leaving the previous commit's absolute placement staged is what makes
-                    # "commit without aiming" mean "do it where I will be" instead of "do it again
-                    # over there".
-                    if self.placement is None and self.anchor is not None:
-                        timeline.stage(placement=self.anchor)
                     timeline.commit(tick)
-                    self.placement = None
             except IntentError as exc:
                 self.last_error = str(exc)
 
@@ -165,7 +153,10 @@ class MatchHost:
     """One match, driven live. Built once, run once.
 
     Args:
-        loadouts: what each seat brought.
+        libraries: the combinations each fighter may commit, one library per fighter. Per `D6`
+            (`spec/intent.md`) both are the whole shared library today — there is no loadout to
+            narrow it — so a caller typically passes the same object for both, but `FightWorld` keeps
+            them separate per fighter rather than assuming it.
         match_format: rounds and clock. Defaults to `spec/match_record.md`.
         match_seed: the number a match reproduces from.
         render: whether to produce frames. False for a headless A/B (`WORKPLAN` M4-T2 latency test).
@@ -173,13 +164,12 @@ class MatchHost:
             `build_arena` compiles ring size, rope heights and glove radius into the model, so a
             config set after construction changes the record and nothing a fighter can touch.
         horizon_ticks: the readable window between committing and executing. A `M4-T4` knob.
-        max_outstanding: how many commits may be unfinished at once. A `M4-T4` knob, and since
-            `spec/intent.md` 1.1 a much heavier one: a move is now its walk plus its pose.
+        max_outstanding: how many commits may be unfinished at once. A `M4-T4` knob.
     """
 
     def __init__(
         self,
-        loadouts: dict[str, Loadout],
+        libraries: dict[str, Mapping[str, CombinationRecord]],
         *,
         match_format: MatchFormat | None = None,
         match_seed: int = 1234,
@@ -192,10 +182,10 @@ class MatchHost:
     ) -> None:
         self.format = match_format or MatchFormat()
         self.match_id = match_id
-        self.loadouts = loadouts
+        self.libraries = libraries
         self.pilots: dict[str, Any] = pilots or {f: QueuedPilot() for f in FIGHTERS}
         self.world = FightWorld(
-            loadouts=loadouts,
+            libraries=libraries,
             pilots=self.pilots,
             match_seed=match_seed,
             config=config,
@@ -211,7 +201,13 @@ class MatchHost:
         self.record = MatchRecord(
             match_id=match_id,
             format=self.format,
-            fighters={f: {"handle": f, "loadout": {"name": loadouts[f].name}} for f in FIGHTERS},
+            # `spec/match_record.md`'s `FighterEntry.loadout {name, version, slots}` is still written
+            # against 1.0-2.2's loadout and has not caught up to `D6` (a later task's job, alongside
+            # `runtime/replay.py`) — this is provisional until it does, and deliberately does not
+            # invent a schema this module does not own.
+            fighters={
+                f: {"handle": f, "combinations": sorted(libraries[f])} for f in FIGHTERS
+            },
             versions={},
             seeds={"match_seed": match_seed},
             arena=self.world.config.__dict__.copy(),
@@ -275,9 +271,9 @@ class MatchHost:
             seats[name] = protocol.seat_state(
                 handle=self.handles.get(name, name),
                 staged=getattr(pilot, "staged", None) if own else None,
-                placement=timeline.staged.placement if own else None,
-                anchor=self.world.anchor(name, self.tick) if own else None,
-                position=self.world.root_pose(name),
+                ghost=timeline.staged.ghost if own else None,
+                anchor=self._anchor_position(name) if own else None,
+                position=self._fighter_position(name),
                 queue=[protocol.queue_entry(c, self.tick) for c in visible],
                 can_commit=len(scheduled) < timeline.max_outstanding,
                 hits_landed=sum(1 for e in self._tracker.events if e.attacker == name),
@@ -369,15 +365,17 @@ class MatchHost:
         )
 
     def spectator_welcome(self) -> dict:
-        """A watcher's welcome: the format and the ring, but no loadout.
+        """A watcher's welcome: the format, the ring, and the same combination library either seat
+        has.
 
-        A spectator is told nothing a player would not already have shown by fighting. Sending them
-        both loadouts would leak, at a projector, what each fighter has available — and anybody in
-        the room can read a projector.
+        Unlike 1.0-2.2's per-seat loadout, this is not withheld any more (`spec/intent.md`'s `D6`):
+        there is no loadout to leak, because both fighters already have identical, complete access to
+        every combination — a spectator seeing the same library a fighter sees does not tell them
+        anything a fighter's own client does not already show.
         """
         message = protocol.welcome(
             seat="spectator",
-            loadout=type("_Empty", (), {"slots": {}})(),
+            library=self.libraries[FIGHTERS[0]],
             match_format=self.format,
             arena=self.record.arena,
             match_id=self.match_id,
@@ -388,11 +386,51 @@ class MatchHost:
     def welcome_message(self, seat: str) -> dict:
         return protocol.welcome(
             seat=seat,
-            loadout=self.loadouts[seat],
+            library=self.libraries[seat],
             match_format=self.format,
             arena=self.record.arena,
             match_id=self.match_id,
         )
+
+    # -- geometry --------------------------------------------------------------------------------------
+    # `runtime/fight.py`'s M6-T7 rewrite deliberately dropped `FightWorld`'s public `root_pose()` and
+    # `anchor()` — the approach that read them is gone, and the only geometry the runtime still needs
+    # is the private, once-per-commit `_anchor_now` `IntentTimeline.generator_intent` calls internally
+    # (`spec/intent.md` "Off-target execution"). This module is not that caller: it needs a fighter's
+    # position on every tick's state message and every commit's feasibility check, so it reads the
+    # same public indices `_anchor_now` does (`FighterRuntime.pelvis_body`, the shared `MjData`)
+    # directly, rather than asking `runtime/` (out of scope for this change, and already reviewed) to
+    # grow a second public accessor for the same number.
+    def _fighter_position(self, seat: str) -> tuple[float, float]:
+        """Where ``seat`` actually stands right now, world ``(x, y)``.
+
+        The pelvis, matching every other world-frame reading in the runtime (`runtime/fight.py`'s
+        ``_anchor_now``, ``separation_m``), so a client-visible position and the one a warp anchors on
+        never disagree.
+        """
+        fighter = self.world.fighters[seat]
+        pelvis = self.world.data.xpos[fighter.pelvis_body]
+        return (float(pelvis[0]), float(pelvis[1]))
+
+    def _anchor_position(self, seat: str) -> tuple[float, float]:
+        """Where a commit issued *right now* would start from.
+
+        The last queued commit's ghost, if the queue is not empty — a combination's whole premise is
+        that its **final keyframe lands exactly on the ghost** (`spec/intent.md` "A commit's span"),
+        so that is where the fighter is expected to be once everything already queued has finished,
+        no simulation required. The fighter's live position otherwise.
+
+        A *projection*, not a promise: physics does not track a plan exactly, and a fighter knocked
+        off course still reaches its ghost by drifting harder, never by refusing (`spec/intent.md`
+        "Off-target execution"). It only has to be good enough to enforce the same `reach_m` ceiling
+        the client was already shown in ``welcome`` — the real, unclamped placement happens at
+        execution, inside ``IntentTimeline.generator_intent``'s own live anchor.
+        """
+        timeline = self.world.fighters[seat].timeline
+        scheduled = timeline.scheduled(self.tick)
+        if scheduled:
+            return scheduled[-1].ghost
+        return self._fighter_position(seat)
 
     # -- the round -------------------------------------------------------------------------------------
     def start_round(self, index: int) -> None:
@@ -413,11 +451,6 @@ class MatchHost:
     def step_once(self) -> str | None:
         """One simulation tick. Returns the fighter knocked out at this tick, if any."""
         start = time.perf_counter()
-        # Tell each pilot where its queue leaves it, before the world asks it to act. This is what a
-        # commit made without touching the shadow lands on.
-        for name, pilot in self.pilots.items():
-            if isinstance(pilot, QueuedPilot) and name in self.world.fighters:
-                pilot.anchor = self.world.anchor(name, self.tick)
         self.world.step(self.tick)
         self.world.observe(self._tracker, self._trace, self.tick)
         self._states.append(np.asarray(self.world.qpos(), dtype=np.float32))
@@ -568,20 +601,37 @@ class MatchHost:
         if not isinstance(pilot, QueuedPilot):
             return protocol.error(f"seat {seat} is not player-controlled", rejected=message["type"])
 
-        if message["type"] == "stage" and message["slot"] not in self.loadouts[seat].slots:
-            return protocol.error(
-                f"slot {message['slot']!r} is not in this loadout", rejected="stage"
-            )
+        timeline = self.world.fighters[seat].timeline
 
-        # Answered here rather than left to surface as a pilot error, because a full queue is the one
-        # rejection a player acts on immediately and `can_commit` in the next state is 33 ms away.
+        # Both checks below are answered here, synchronously, rather than left to surface through
+        # `pilot.last_error` on the next tick: an unknown combination and a queue already full are
+        # exactly the rejections `spec/intent.md` wants a player to see *before paying for the
+        # commit* (`spec/intent.md` "Feasibility"), and `handle`'s return value is what
+        # `server/app.py` sends straight back over the socket — a deferred error never reaches it.
+        if message["type"] == "intent":
+            try:
+                protocol.check_combination(message["combination"], timeline.library)
+            except protocol.ProtocolError as exc:
+                return protocol.error(str(exc), rejected="intent")
+
         if message["type"] == "commit":
-            timeline = self.world.fighters[seat].timeline
             if len(timeline.scheduled(self.tick)) >= timeline.max_outstanding:
                 return protocol.error(
                     f"{timeline.max_outstanding} moves are already queued; no cancellation",
                     rejected="commit",
                 )
+            # The one place the speed ceiling is enforced (`spec/intent.md` "Off-target execution"):
+            # a ghost beyond what the staged combination can reach from its projected anchor is
+            # refused now, before it queues. Skipped when nothing committable is staged — `commit`
+            # then fails downstream, in `IntentTimeline.commit` itself, with its own "nothing is
+            # staged" error.
+            staged = timeline.staged
+            if staged.is_committable():
+                record = timeline.library[staged.combination]
+                try:
+                    protocol.check_reach(record, self._anchor_position(seat), staged.ghost)
+                except protocol.ProtocolError as exc:
+                    return protocol.error(str(exc), rejected="commit")
 
         pilot.queue(message)
         return None

@@ -1,6 +1,6 @@
 # protocol.md — client ↔ match host
 
-Version **0.5** · created 2026-08-08 · tasks `M4-T1`, `M4-T2`
+Version **0.6** · created 2026-08-08 · tasks `M4-T1`, `M4-T2`, `M6-T8`
 
 One websocket per player. The host owns the match; the client owns nothing and is never trusted.
 
@@ -16,8 +16,14 @@ protocol. A client may show a commit as rejected only because the host said so.
 0.4 adds one carefully bounded exception, and names it as one: **the shadow lives entirely in the
 client**. The ghost a player aims with is drawn in the browser, moved in the browser, and the host
 never sees it — a preview that round-tripped before it moved would be unusable, and where a player is
-*thinking* of standing is not the server's business. The host learns a placement only when one is
+*thinking* of standing is not the server's business. The host learns a ghost only when one is
 **committed**. See §The shadow.
+
+0.6 adds a second exception the client-side shadow already implied but 0.4-0.5 did not have to name:
+**the library is not secret.** `spec/intent.md` 3.0's `D6` retires the per-seat loadout — both
+fighters have identical, complete access to every combination — so `welcome` now ships the whole
+library to a seat *and* to a spectator, rather than the single loadout a seat brought. See §Host →
+client and §"Feasibility".
 
 ## Rates
 
@@ -135,29 +141,40 @@ partially — the client must refuse it loudly (`CLAUDE.md` invariant 5).
 ## Client → host
 
 ```jsonc
-{"type": "join",   "handle": "carlo", "seat": "red"}      // seat may be omitted; host assigns
-{"type": "stage",  "slot": "3"}                            // choose the move's final pose
-{"type": "place",  "x": 1.2, "y": -0.4, "heading": 1.57}   // 0.4 — where the shadow stands
-{"type": "commit"}                                          // queue whatever is staged
-{"type": "clear"}                                           // unstage; not a cancellation
-{"type": "ping",   "t": 1712345678901}                     // client clock, echoed back
+{"type": "join",   "handle": "carlo", "seat": "red"}          // seat may be omitted; host assigns
+{"type": "intent", "combination": "hook-left", "ghost": [1.2, -0.4]}   // 0.6 — what, and where it ends
+{"type": "commit"}                                              // queue whatever is staged
+{"type": "clear"}                                               // unstage; not a cancellation
+{"type": "ping",   "t": 1712345678901}                         // client clock, echoed back
 ```
 
-`stage` and `commit` are separate because they are separate in `spec/intent.md`: staging is
+`intent` and `commit` are separate because they are separate in `spec/intent.md`: staging is
 continuous and free, committing is the irreversible act. A client that only ever sends `commit` is
-legal and means "fire the current stage, wherever the shadow last was".
+legal and means "fire whatever was last staged".
 
-**Every message is validated.** An unknown `type`, a `slot` outside the loadout, a non-finite
-coordinate, or a `commit` with a full queue produces an `error` message; it never mutates the match
-and never closes the socket.
+**0.6 collapses 0.4's separate `stage` (which slot) and `place` (where, with a player-set heading)
+into one `intent` message.** `spec/intent.md` 3.0's `D6`/`D5` removed both of the reasons they needed
+to be two: a combination has no slot to name — it is selected by name, from the whole shared library
+— and its ghost carries no heading any more, since the ghost's heading is *derived* (the fighter's own
+heading plus the combination's recorded turn) and never player-set. There is exactly one thing left to
+stage, not two, so there is exactly one message.
 
-*(0.3's `move` message was removed at 0.4. Steering is gone — `spec/intent.md` §"What happened to
-walking".)*
+`ghost` is **absolute** MuJoCo world `(x, y)` — the position the client's own shadow, drawn and moved
+entirely in the browser (see §The shadow), has already been dragged to. The host never sees the
+shadow move; it only ever sees where an `intent` says it currently is.
+
+**Every message is validated.** An unknown `type`, an unknown `combination`, a non-finite or
+malformed `ghost`, a `ghost` beyond the *combination's own* `reach_m` (see §"Feasibility"), or a
+`commit` with a full queue produces an `error` message; it never mutates the match and never closes
+the socket.
+
+*(0.3's `move` message was removed at 0.4. 0.4's `stage` and `place` were removed at 0.6, folded into
+`intent` as above.)*
 
 ## Host → client
 
 ```jsonc
-{"type": "welcome", "seat": "red", "loadout": {"1": "jab-left", ...},
+{"type": "welcome", "seat": "red", "combinations": [{...}, ...],
                     "format": {...}, "arena": {...}, "match_id": "..."}
 {"type": "state",   "tick": 412, "round": 1, "clock_ticks": 2588,
                     "seats": {"red": {...}, "blue": {...}}, "phase": "fighting",
@@ -167,21 +184,52 @@ walking".)*
 {"type": "pong",    "t": 1712345678901}                    // the client's own clock, echoed
 ```
 
+### `welcome`'s combination library (0.6)
+
+```jsonc
+{"type": "welcome", "spec_version": "0.6", "seat": "red", "match_id": "...",
+  "combinations": [
+    {"name": "hook-left-cross", "seconds": 1.6, "heading_delta": -0.12, "reach_m": 1.33,
+     "pose": {"left_hip_pitch_joint": -0.31, ...}},   // all 29, the *final* keyframe only
+    ...
+  ],
+  "approach_speed_m_s": 0.83,
+  "format": {...}, "arena": {...}
+}
+```
+
+**No more `loadout`.** `spec/intent.md`'s `D6` retires the per-seat six-slot loadout: both fighters
+have identical, complete access to the whole library, and — because the library is not secret — a
+spectator's `welcome` carries the same `combinations` a seat's does (unlike 1.0-2.2's loadout, which a
+spectator's `welcome` withheld). `horizons`, `pose_seconds` and `poses` are gone with it; `pose` (one
+entry's own final-keyframe joint angles) and `seconds` (`duration_ticks / TICK_HZ`) replace them,
+one-for-one per combination rather than once per slot.
+
+Sorted by `name`, so the client can page through it deterministically nine at a time (`D6`) without
+inventing its own ordering.
+
+`pose` carries only the **final keyframe's** joint angles — the pose the ghost is drawn in, not the
+whole combination's motion — because that is the one MotionBricks-independent fact the client's
+shadow needs to pose itself (see §The shadow, unchanged in principle since 0.4: the shadow is drawn in
+the browser, and a ghost that had to ask the server where its elbow goes could not be aimed with).
+
+`reach_m` is carried **per combination**, replacing 1.1's single ring-wide "everywhere is reachable" —
+see §"Feasibility".
+
 ### Seat state, per fighter
 
 ```jsonc
 {
   "handle": "carlo",
-  "staged": "3",                  // slot, or null
-  "placement": {"x": 1.2, "y": -0.4, "heading": 1.57},   // 0.4 — where the shadow is, or null
-  "anchor":    {"x": 0.9, "y": 0.0, "heading": 0.0},     // 0.4 — where the queue leaves you
-  "queue": [                                             // 0.4 — scheduled, executing first
-    {"slot": "3", "pose": "uppercut-right", "issued_at": 400,
-     "commit_at": 430, "strike_at": null, "end_tick": null,   // 0.5 — still walking there
-     "executing": true, "approaching": true},
-    {"slot": "1", "pose": "jab-left", "issued_at": 455,
-     "commit_at": null, "strike_at": null, "end_tick": null,  // 0.5 — has not started
-     "executing": false, "approaching": false}
+  "staged": "hook-left-cross",              // combination name, or null
+  "position": {"x": -1.1, "y": 0.02},       // 0.6 — where the fighter is standing right now
+  "ghost":    {"x": 1.2, "y": -0.4},        // 0.6 — where the shadow is, or null
+  "anchor":   {"x": 0.9, "y": 0.0},         // 0.6 — where a commit issued now would start from
+  "queue": [                                             // scheduled, executing first
+    {"combination": "hook-left-cross", "ghost": {"x": 1.2, "y": -0.4}, "issued_at": 400,
+     "commit_at": 430, "end_tick": 510, "executing": true},
+    {"combination": "jab-left", "ghost": {"x": 0.9, "y": 0.0}, "issued_at": 455,
+     "commit_at": null, "end_tick": null, "executing": false}    // has not started
   ],
   "queue_depth": 2,               // len(queue)
   "can_commit": true,             // queue_depth < MAX_OUTSTANDING_COMMITS, decided by the host
@@ -194,44 +242,65 @@ walking".)*
 `can_commit` exists so the client can grey out a key **without knowing the rule**. If the host's
 rule changes, no client changes.
 
-**`commit_at`, `strike_at` and `end_tick` are `null` until the move reaches each stage (0.5).** A
-commit runs until it arrives (`spec/intent.md` 1.1), so its span is not known when it is issued and
-the queue is not a schedule. A client must read `null` as *"not yet"* — never as zero, and never as
-"already over", which would make a fighter walking across the ring look idle. `approaching` is the
-one flag worth drawing: the move has started and is walking, and the punch has not been thrown.
+**`commit_at` and `end_tick` are `null` until the commit becomes current.** Unlike 1.1-2.2, this is
+not "unknown, ask again later": `spec/intent.md` 3.0 gives every combination a **fixed** duration
+(`record.duration_ticks`, read straight off the recording), so the instant `commit_at` is stamped,
+`end_tick = commit_at + record.duration_ticks` is exact arithmetic and is never revised. `null` still
+means *"not yet"* — the commit is queued but its turn has not come — never zero and never "already
+over". There is no `strike_at` / `approaching` distinction any more: 3.0 deleted the walk-then-throw
+phase they existed to tell apart, so a commit is simply not started, running (`executing`), or
+finished.
 
 **A seat sees its own `queue` in full. The opponent's `queue` carries only entries that are
 executing.** A queued-but-unstarted commit has been paid for but not yet shown, and showing it would
 hand the opponent a readable list of your next four moves — which is exactly the risk the queue is
 supposed to be (`spec/intent.md` §The shadow).
 
-### The shadow (0.4)
+### The shadow (0.4, ghost-only since 0.6)
 
-**The shadow is the client's.** It is posed in the browser — pose angles from `welcome`, kinematic
-tree from `/scene.json` — moved in the browser, and never transmitted while it is being aimed. The
-host learns a placement only when `commit` fires. A ghost that asked the server where to stand before
-it could move would be unusable, and a half-formed plan is not the server's business.
+**The shadow is the client's.** It is posed in the browser — the final keyframe's joint angles from
+`welcome`, the kinematic tree from `/scene.json` — moved in the browser, and never transmitted while
+it is being aimed. The host learns a ghost only when `intent` (or a bare `commit`) sends one. A ghost
+that asked the server where to stand before it could move would be unusable, and a half-formed plan is
+not the server's business.
 
-`anchor` is **where the fighter will be standing when everything it has committed has finished** —
-the last queued commit's placement, or the fighter's current root pose when the queue is empty.
+**Position only, since 0.6.** Before `spec/intent.md` 3.0 a placement carried a player-set `heading`
+too; a ghost's heading is now *derived* — the fighter's own heading plus the combination's recorded
+turn (`runtime/warp.py::ghost_heading`) — and is never chosen by the player (design `D5`, because the
+corpus's travelling combinations turn by up to 158° and a target-facing ghost would discard that
+turn). The client may still compute and draw the derived heading for its own preview, but it has
+nothing to send the host about it.
 
-Since 1.1 that promise is a real one: a commit walks until it arrives, so the anchor is where the
-fighter will actually be rather than a point it was aimed at and fell short of.
+`anchor` is **where a commit issued right now would start from**: the last queued commit's ghost — a
+combination's whole premise is that its final keyframe lands exactly there — or the fighter's current
+position when the queue is empty. It is a *projection*, not a promise (see §"Feasibility" — a fighter
+knocked off course still reaches its ghost, by drifting harder, never by the commit being refused
+after the fact).
 
-It is the anchor and not the fighter's live position on purpose. The next move starts from the end of
-the queue, so that is what a placement should be judged against; and it is *stable*, where the live
-position moves under the player's cursor for the whole duration of every move.
+It is the anchor and not the fighter's live `position` that a client should judge a new ghost against,
+for the same reason 0.4 gave: the next move starts from the end of the queue, and the anchor is
+*stable*, where the live position moves for the whole duration of every move.
 
-So the client draws its shadow at `anchor + local offset` and edits the offset with no round trip.
-On `commit` it sends the resulting **absolute** placement and resets the offset to zero. A commit
-with no `place` since the last one means "do this where I will be" — the host resolves it against the
-anchor — which is what a pure strike wants.
+`ghost` in seat state is what the host holds as this seat's most recently staged ghost, echoed back so
+a reconnecting client can recover it. It is *not* a live feed of the shadow's on-screen position,
+which the host cannot see while it is being dragged.
 
-`heading` defaults to facing the opponent from the anchor. Distances are metres in **MuJoCo world
-coordinates**, the frame the arena, the scene description and the binary frames all use.
+### Feasibility: `reach_m` (0.6)
 
-`placement` in seat state is what the host holds for that seat, echoed back so a reconnecting client
-can recover. It is *not* a live feed of the ghost, which the host cannot see.
+`spec/intent.md` "Feasibility": since a combination's duration is fixed by its recording (unlike
+1.1-2.2, where anywhere in the ring was reachable and distance only cost time), how far its ghost may
+sit from the anchor is bounded, and the bound **differs per combination** — roughly 1.6-6.6 m across
+the library. `welcome`'s `reach_m` is that bound, computed once per entry
+(`approach_speed_m_s * duration_ticks / TICK_HZ`); the host enforces the identical number when a
+commit is issued (`server/protocol.py::check_reach`), so the two can never disagree, and a client that
+shows it before a placement is attempted is never showing a number the host will contradict.
+
+**This is the one place the speed ceiling is enforced.** It runs once, when the player commits — never
+again. A commit that starts off-target because physics did not track a previous move exactly still
+runs and still reaches its ghost, at whatever drift that needs, even above `approach_speed_m_s`
+(`spec/intent.md` "Off-target execution"); nothing about that is re-checked or refused. A client that
+shows `reach_m` is helping a player avoid the one rejection that *can* happen, not describing every
+outcome that can follow a commit.
 
 ### Movement and range
 
@@ -271,7 +340,7 @@ trace, and a client cannot see 25 recomputes a second anyway.
 ### What is deliberately not sent
 
 - **No fighter HUD.** `WORKPLAN` M4-T1: "No HUD on the fighters — the windup is the only cue." The
-  opponent's staged slot, shadow and unstarted queue entries are *never* transmitted.
+  opponent's staged combination, shadow and unstarted queue entries are *never* transmitted.
 - **No joint angles, only body transforms.** The client cannot reconstruct a fighter's internal state
   from what it draws, and does not need to.
 
@@ -295,6 +364,22 @@ lands*, and does not advantage either seat.
 
 ## Changelog
 
+- **0.6** (2026-08-28, `M6-T8`) — **the protocol catches up with `spec/intent.md` 3.0: a commit is a
+  combination.** `stage` (which slot) and `place` (where, with a player-set heading) collapse into one
+  `intent` message (`{"combination": ..., "ghost": [x, y]}`) — a combination has no slot to name and
+  its ghost has no heading to carry any more (`D5`/`D6`). `welcome` drops the per-seat `loadout` and
+  ships `combinations`: the whole shared library, sorted by name, one entry per combination carrying
+  `seconds`, `heading_delta`, a per-combination `reach_m`, and the *final keyframe's* `pose` — because
+  under `D6` there is no loadout left to be secret, a spectator's `welcome` now carries exactly what a
+  seat's does. `reach_m` replaces 1.1's retired assumption that anywhere in the ring is reachable: a
+  combination's duration is fixed by its recording, so how far its ghost may sit from the anchor is
+  bounded and differs move to move (`spec/intent.md` "Feasibility") — the host enforces the identical
+  number the instant a commit is issued (`server/protocol.py::check_reach`), the one place the speed
+  ceiling is enforced; a commit that starts off-target still reaches its ghost anyway, running
+  whatever drift that needs, and is never refused after the fact. Seat state's `placement` is renamed
+  `ghost` and drops `heading`; `queue` entries drop `slot`, `pose`, `strike_at` and `approaching` —
+  3.0 deleted the walk-then-throw phase they distinguished — and gain `combination` and `ghost`.
+  `Loadout` and `Placement` are gone from the runtime types this module speaks against.
 - **0.5** (2026-08-08) — **a commit's span is settled as it runs.** `commit_at`, `strike_at` and
   `end_tick` in a queue entry are `null` until the move reaches each stage, and `approaching` says
   whether it is still walking. `welcome` dropped `reach_m` — since `spec/intent.md` 1.1 anywhere in
