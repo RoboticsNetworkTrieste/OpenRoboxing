@@ -71,7 +71,7 @@ Violating any of these is a design regression, not a shortcut:
 | Plan length | **the leg's recorded duration**, 6–16 tokens | forced since `spec/intent.md` 3.0 — a combination lasts as long as its recording |
 | Combination style | **`walk_boxing`** | the only clip allowing 6–16 tokens; `walk` caps at 11 |
 | Leg | **0.8–2.13 s** | `MIN_TOKENS`–`MAX_TOKENS` × 4 frames at 30 Hz |
-| Combination | **3–6 keyframes, 1.9–8.0 s** | measured over the 120-record v0.2 library |
+| Combination | **3–6 keyframes, 2.4–7.6 s** | measured over the 136-record v0.2 library, rebuilt 2026-08-28 for the D1 turning-point fix |
 | Move end | **`commit_at + duration_ticks`** | known when it starts — `spec/intent.md` 3.0 |
 | Drift gain | **0.803** | the generator covers this fraction of a commanded residual; `warp.py` divides by it |
 | Sustained walk | **0.83 m/s** | measured; validates a player's placement at issue time only |
@@ -115,7 +115,7 @@ src/openroboxing/
   server/        match host, protocol, agent API, Studio API
   league/        scoring, Glicko-2, Swiss pairing, season, freeze manifest
   poses/         pose library (data, versioned) · dev/ holds Studio drafts
-                 v0.1/ single key poses · v0.2/combinations/ the 120 built combinations (M5)
+                 v0.1/ single key poses · v0.2/combinations/ the 136 built combinations (M5)
   tools/         CLI entrypoints — `python -m openroboxing.tools.<name>`
 tests/           unit + golden tests, fixtures under tests/fixtures/
 docs/            ASSUMPTIONS.md (every decision taken that was really the owner's),

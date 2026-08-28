@@ -21,7 +21,7 @@ def library():
 
 
 def test_every_record_loads_and_validates(library):
-    assert len(library) == 120
+    assert len(library) == 136
 
 
 def test_names_are_unique(library):

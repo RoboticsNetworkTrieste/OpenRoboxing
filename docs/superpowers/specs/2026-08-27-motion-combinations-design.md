@@ -73,6 +73,49 @@ rule is the game); one take truncated to N seconds (arbitrary cut, discards most
 Segmenting on salient-joint speed peaks at least 0.8 s apart yields **300 key poses across the 19
 takes**, grouped into **60 combinations**, or **120 with mirrors**.
 
+**Corrected 2026-08-28 — "salient-joint speed peaks" is the defect, not the rule.** The project owner
+played the built library and reported *"the motions are not complete enough, resulting in not
+punches but statuary positioning."* Root cause: a punch's *speed* peaks halfway through the
+extension; at full extension — the pose, the reversal — the hand is momentarily stationary. Selecting
+on speed therefore samples the moments *between* poses and never the poses themselves, and
+MotionBricks in-betweens between two mid-swing configurations. Measured on the four evidence takes
+below, the old rule captured 4/39 = 10.3 % of a take's punches.
+
+The fix mirrors an argument `studio/telegraph.py` already makes, inverted: distance (here, the
+signal a key pose turns around on) must be measured in **Cartesian body space, not joint space**,
+because several joints can keep rotating through a reversal that a single tracked point — the fist —
+has already completed. Three signals, all forward-kinematics on `paths.G1_29DOF_SIM_XML`: **reach**
+(further wrist from pelvis — punches), **level** (pelvis height above the ankles — ducks and rises),
+**shift** (pelvis's horizontal offset from the foot midpoint — slips and weight transfer). Key poses
+are **turning points** of these signals (`scipy.signal.find_peaks` on the signal and its negation,
+i.e. maxima and minima both), not speed maxima.
+
+The three signals are **prioritised, not unioned**, and this was measured, not assumed: unioning all
+three and picking strongest-first drops punch capture from 39/48 to 14/48 over the same 7-take
+sample, because `shift` and `level` vary almost everywhere a fighter moves while `reach` is quiet
+except during a strike, and a slip's prominence routinely evicts a nearby punch under the tight
+`MIN_KEYFRAME_GAP_FRAMES` spacing budget. So `reach` turning points (prominence >= 0.05 m) are taken
+first, greedily strongest-first; `level` and `shift` turning points (prominence >= 0.02 m) fill
+remaining space only and may never displace a `reach` keyframe; `densify` closes any gap still longer
+than `MAX_LEG_FRAMES` at the strongest turning point inside it (any signal), not the gap's busiest
+frame — the same mid-swing bug, one level down.
+
+| take | punches in take | captured (old rule) | captured (new rule) |
+|---|---|---|---|
+| `shadow_boxing_R_001__A359` | 13 | 1 | 9 |
+| `shadow_boxing_R_003__A360` | 11 | 0 | 9 |
+| `shadow_boxing_R_002__A361` | 12 | 1 | 9 |
+| `ib_dodge_up_R_001__A437` | 3 | 0 | 3 |
+
+("Punch" = a prominent local maximum of `reach`, prominence >= 0.05 m — the same threshold the
+segmenter itself uses, measured as the unique value in {0.03, 0.04, 0.05, 0.06, 0.08, 0.10} that
+reproduces these four counts exactly.) New rule: 30/39 = 76.9 % over these four takes; 39/48 = 81.3 %
+over a 7-take sample spanning all three motion families (shadow boxing, dodges, jog-turns), 119-126
+keyframes depending on the exact sample. Old rule: 4/39 = 10.3 %. Implementation:
+`studio/segment.py`; full argument in its module docstring. The rebuilt `v0.2` library moved from
+120 to **136 combinations** (durations 2.4-7.6 s, was 1.9-8.0 s) — the count is a *consequence* of
+where turning points fall, not a target either rule was fitted to.
+
 ### D2 — the generator's timing quantum bounds everything
 
 A plan is `MIN_TOKENS=6` to `MAX_TOKENS=16` tokens of `NUM_FRAMES_PER_TOKEN=4` frames at 30 Hz, so a
@@ -167,15 +210,16 @@ default.
 
 ### `studio/segment.py`
 
-Salient-joint speed reuses `harvest.py`'s `SALIENT_JOINT_SUBSTRINGS` (shoulder, elbow, wrist) — two
-guards differ at the hands, and scoring on everything ranks a long stride above a thrown punch.
+**Superseded 2026-08-28 by the D1 correction above.** This subsection originally specified
+salient-*joint-space-speed* peaks, quantile-thresholded; that is the defect the correction fixes, not
+a rule that survived contact with play. The current rule is Cartesian turning points (`reach`,
+`level`, `shift`, all forward-kinematics on `paths.G1_29DOF_SIM_XML`), `reach` prioritised over
+`level`/`shift` fill, both gated by a measured prominence floor rather than a quantile. Full argument
+in `studio/segment.py`'s module docstring, which is the living version of this section.
 
-Keyframes are local maxima at least `MIN_TOKENS * NUM_FRAMES_PER_TOKEN` = 24 frames apart. The
-prototype's "20 % of peak" threshold is an invented number and does not survive: the threshold is
-derived from the take's own speed distribution, as `telegraph.py` derives its divergence threshold
-from the baseline's own variation, with the sigma multiple as the one stated free parameter.
-
-Combinations are runs of 3–6 consecutive keyframes, split at the longest quiet intervals.
+Keyframes are still never closer than `MIN_TOKENS * NUM_FRAMES_PER_TOKEN` = 24 frames, and
+combinations are still runs of 3–6 consecutive keyframes, split at the longest quiet intervals — D2
+is unaffected by the D1 correction.
 
 ### `spec/combination.md` 0.1
 

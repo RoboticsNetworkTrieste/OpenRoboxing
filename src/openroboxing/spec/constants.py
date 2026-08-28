@@ -60,18 +60,33 @@ gap longer than this is *densified* — a keyframe is added at the busiest frame
 than held, so every leg is plannable and no leg invents motion the recording does not contain.
 """
 
-KEYFRAME_QUANTILE: float = 0.70
-"""How busy a frame must be, against its own take, to be eligible as a keyframe.
+REACH_TURNING_PROMINENCE_M: float = 0.05
+"""How prominent a reversal of ``reach`` (wrist-to-pelvis distance) must be to count as a punch.
 
-The one free parameter of the segmenter, stated rather than buried. A keyframe sits where the body
-is moving faster than it does for 70 % of the take.
+**Measured, not chosen**, 2026-08-28 (``scratchpad/measure_punches.py``, forward kinematics on
+:data:`~openroboxing.paths.G1_29DOF_SIM_XML`): 0.05 m is the exact threshold at which
+``scipy.signal.find_peaks(reach, prominence=...)`` reproduces the reference punch counts on all four
+evidence takes named in ``docs/superpowers/specs/2026-08-27-motion-combinations-design.md``'s D1
+correction — 13, 11, 12 and 3 — where every other tried value (0.03, 0.04, 0.06, 0.08, 0.10) misses
+at least one. This is the segmenter's primary selection criterion (``studio/segment.py``): reach
+turning points are taken first and nothing may displace one once chosen.
 
-**Not a peak-detection threshold**, and deliberately so. Measured 2026-08-27: the shadow-boxing takes
-have real spikes (median 0.106, peak 1.028 rad/frame of salient motion) but the travelling takes are
-uniformly active (median 0.117, peak 0.331), so a "3 sigma above the median" rule admits 120 frames
-from one and **4** from the other, and all four `combat_turn_jog_start` takes — the only motions that
-cross the ring — produce no combination at all. A quantile makes no assumption that the distribution
-is peaked, and covers all 38 takes.
+Superseded 2026-08-28. Replaces ``KEYFRAME_QUANTILE``, which selected on joint-space *speed* and
+therefore sampled mid-swing frames instead of the poses either side of them — the defect reported by
+the project owner as "not punches but statuary positioning". See ``studio/segment.py``'s module
+docstring.
+"""
+
+FILL_TURNING_PROMINENCE_M: float = 0.02
+"""How prominent a reversal of ``level`` or ``shift`` must be to fill space a punch did not claim.
+
+**Measured, not chosen**: kept below :data:`REACH_TURNING_PROMINENCE_M` because ducks, leans and
+weight shifts are smaller-amplitude reversals than a punch's extension, and a fill threshold at the
+punch level would leave most of a dodge or jog take with no fill keyframes at all. Deliberately a
+*fill-only* threshold, never unioned with reach's: unioning drops punch capture from 39/48 to 14/48
+across a 7-take sample spanning all three motion families, because with only
+:data:`MIN_KEYFRAME_GAP_FRAMES` of spacing budget a slip's prominence routinely outranks and evicts a
+nearby punch. See ``studio/segment.py``'s module docstring for the full argument.
 """
 
 COMBINATION_MIN_KEYFRAMES: int = 3

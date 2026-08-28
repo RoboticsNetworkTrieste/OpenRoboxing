@@ -40,7 +40,10 @@ are `[0, 0]` / `0.0` on keyframe 0 by construction.
 
 `leg_tokens` is bounded by `MIN_TOKENS`..`MAX_TOKENS` because that is what MotionBricks can plan
 (`spec/rates.md`). A recorded gap longer than `MAX_TOKENS` is densified — a keyframe is added at the
-busiest frame inside it — rather than held, so every leg is plannable.
+strongest turning point inside it (or its midpoint, if the gap has none) — rather than held, so every
+leg is plannable. Corrected 2026-08-28: this used to add a keyframe at the gap's *busiest* frame,
+which is the same mid-swing bug `studio/segment.py`'s module docstring documents for the top-level
+selection.
 
 ## Why the measured fields are nullable
 
