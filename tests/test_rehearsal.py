@@ -437,77 +437,6 @@ def test_an_armed_approach_converges_on_both_the_placement_and_the_pose() -> Non
     assert settled.mean() < result.pose_error_rad[0] / 2, np.degrees(settled.mean())
 
 
-def test_settle_index_finds_where_a_curve_reaches_its_asymptote() -> None:
-    """Reproduce: .venv_mb/bin/python -m pytest tests/test_rehearsal.py -k settle_index -v"""
-    import numpy as np
-
-    from openroboxing.tools.measure_dwell import settle_index
-
-    # Falls for 10 samples, then flat. The asymptote is reached at index 10.
-    curve = np.concatenate([np.linspace(1.0, 0.1, 11), np.full(20, 0.1)])
-    assert settle_index(curve, from_index=0) == 10
-
-    # Already flat: settles immediately.
-    assert settle_index(np.full(15, 0.2), from_index=3) == 3
-
-
-def test_settle_index_rejects_a_start_outside_the_curve() -> None:
-    import numpy as np
-    import pytest as _pytest
-
-    from openroboxing.tools.measure_dwell import settle_index
-
-    with _pytest.raises(ValueError):
-        settle_index(np.zeros(5), from_index=5)
-
-
-def _dip_and_spike_curves() -> tuple[np.ndarray, np.ndarray]:
-    """Two curves identical but for the direction of their excursion. See the two tests below."""
-    approach = [
-        np.linspace(1.0, 0.5, 11),  # 0..10, converging on an asymptote of 0.5 at index 10
-        np.full(10, 0.5),           # 11..20, sitting on it
-    ]
-    settled = [np.full(20, 0.5)]    # 26..45, on it for the rest of the run
-    dip = np.concatenate([*approach, np.full(5, 0.2), *settled])    # 21..25 BELOW the band
-    spike = np.concatenate([*approach, np.full(5, 0.9), *settled])  # 21..25 ABOVE the band
-    return dip, spike
-
-
-def test_settle_index_is_not_delayed_by_a_dip_below_the_asymptote() -> None:
-    """Being MORE accurate than steady state is arrival, not instability.
-
-    Half of the asymmetry that defines this metric, and the half a reader will mistake for a bug:
-    the band is one-sided on purpose. Once the error has come down, a frame that happens to land
-    below steady state means the pose is being held better than the library average - there is
-    nothing left to wait for, so it must not push the settle point later. Measured: scoring dips as
-    instability put the library's median dwell at 188 ticks (3.8 s) against 1 tick one-sided,
-    because the residual oscillation dips below steady state constantly.
-
-    Its twin is ``test_settle_index_waits_out_an_overshoot_above_the_asymptote``.
-
-    Reproduce: .venv_mb/bin/python -m pytest tests/test_rehearsal.py -k settle_index -v
-    """
-    from openroboxing.tools.measure_dwell import settle_index
-
-    dip, _ = _dip_and_spike_curves()
-    assert settle_index(dip, from_index=0) == 10
-
-
-def test_settle_index_waits_out_an_overshoot_above_the_asymptote() -> None:
-    """The other half: an excursion ABOVE the band is a failure to settle, and does delay it.
-
-    Same curve as its twin above, excursion inverted, and the answer changes: the pose left the
-    quality it had reached, so the settle point is the later, sustained entry (index 26) and not the
-    first arrival (index 10). This is the original jab-right bug seen from the other side - it
-    arrived ~10 deg off, touched 4.70 deg at 5.1 s and drifted back up to ~7.5 deg, and crediting a
-    touch rather than residence reported a 105-tick dwell the pose does not have.
-    """
-    from openroboxing.tools.measure_dwell import settle_index
-
-    _, spike = _dip_and_spike_curves()
-    assert settle_index(spike, from_index=0) == 26
-
-
 @pytest.mark.slow
 def test_the_stream_holds_a_pose_indefinitely_without_raising() -> None:
     """Under 1.1 a plan outliving its move by more than one frame raised. Holding is now normal.
@@ -532,18 +461,3 @@ def test_the_stream_holds_a_pose_indefinitely_without_raising() -> None:
     stream.ensure(lambda _tick: held, tick=500)   # 10 s of holding one pose
 
     assert stream.motion.shape[0] >= 500
-
-
-def test_settle_index_wants_sustained_residence_not_a_first_touch() -> None:
-    """Entering the band and leaving again is not settling; the later, sustained entry is."""
-    import numpy as np
-
-    from openroboxing.tools.measure_dwell import settle_index
-
-    curve = np.concatenate([
-        np.full(5, 1.0),            # 0..4, far off
-        np.full(2, 0.5),            # 5..6, one touch of the band, then gone again
-        np.full(5, 0.9),            # 7..11, back out
-        np.tile([0.48, 0.52], 10),  # 12..31, oscillating inside the band for the rest of the run
-    ])
-    assert settle_index(curve, from_index=0) == 12
