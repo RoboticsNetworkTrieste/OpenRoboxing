@@ -16,7 +16,8 @@ which means actually asking MotionBricks to reach the pose. That takes seconds a
 checkpoint, so it is a separate, explicit request and the UI says what it is doing.
 
 A pose saved without admission is a **draft**, and drafts are exactly what a match refuses to use
-(``Loadout.validate``). That is the intended path, not a limitation.
+(``IntentTimeline``'s ``require_admitted``, `spec/intent.md` "Admission is enforced at
+construction"). That is the intended path, not a limitation.
 """
 
 from __future__ import annotations
@@ -185,8 +186,8 @@ def build_studio_app(client_dir: Path = CLIENT_DIR, draft_dir: Path = DRAFT_DIR)
                 "path": str(path),
                 "admission": record.admission,
                 "note": (
-                    "Saved as a draft. A match refuses drafts (Loadout.validate); admission needs a "
-                    "measured generator_error_rad — see spec/pose_record.md."
+                    "Saved as a draft. A match refuses drafts (IntentTimeline's require_admitted); "
+                    "admission needs a measured generator_error_rad — see spec/pose_record.md."
                 ),
             }
         )

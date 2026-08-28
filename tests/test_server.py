@@ -10,9 +10,9 @@ websocket client can join, play and be streamed to. The browser half is `docs/pl
 
 Rewritten against `spec/intent.md` 3.0 and `spec/protocol.md` 0.6: a commit now carries a
 **combination** (`spec/combination.md`) and a **ghost** — world ``(x, y)`` only, no heading — instead
-of a loadout slot and a placement with a player-set heading. ``Loadout``, ``Placement`` and the
-``stage`` / ``place`` messages they were staged through are gone from the protocol; see this file's
-own commit message for exactly which tests that retired, and why.
+of a loadout slot and a placement with a player-set heading. The loadout (deleted, task A6),
+``Placement`` and the ``stage`` / ``place`` messages they were staged through are gone from the
+protocol; see this file's own commit message for exactly which tests that retired, and why.
 
 Reproduce:
     .venv_mb/bin/python -m pytest tests/test_server.py -v

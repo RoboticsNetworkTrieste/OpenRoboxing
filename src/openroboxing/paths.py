@@ -73,9 +73,6 @@ GOLDEN_POLICY_IO_DIR: Path = FIXTURES_DIR / "golden_policy_io"
 
 #: Authored poses, one directory per library version (``v0.1/``, ...).
 POSE_DIR: Path = OPENROBOXING_ROOT / "poses"
-#: Loadouts sit *beside* the libraries, not among them: ``load_library`` reads every JSON file in a
-#: directory, so a loadout filed with the poses is parsed as a malformed pose.
-LOADOUT_DIR: Path = POSE_DIR / "loadouts"
 
 MOTIONS_DIR: Path = REPO_ROOT / "motions"
 """The mocap corpus: Maya-style CSV exports, one per take. See spec/combination.md."""

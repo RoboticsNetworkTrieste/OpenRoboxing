@@ -3,7 +3,9 @@
 Version **0.1** · created 2026-08-27 · design `docs/superpowers/specs/2026-08-27-motion-combinations-design.md`
 
 A combination is one selectable move: an ordered run of 3–6 key poses with the timing they were
-recorded at. It replaces the single `pose_record.md` key pose as the unit a loadout slot holds.
+recorded at. It replaces the single `pose_record.md` key pose as the unit a player selects — what a
+loadout slot used to hold, before `spec/intent.md` 3.0's `D6` retired the loadout in favour of the
+whole shared library, paged.
 
 ---
 

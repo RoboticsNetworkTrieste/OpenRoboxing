@@ -56,8 +56,8 @@ Violating any of these is a design regression, not a shortcut:
    an observation term cannot be built, raise.
 6. **Determinism is recorded, not assumed.** Every match records seeds, versions (pose library, policy
    weights, rules, robot model) and a state trace. Bit-exact re-simulation is *not* promised.
-7. **Specs before implementations.** Anything crossing a boundary (intent, pose record, loadout, match
-   record, rules, agent API) is a versioned schema in `src/openroboxing/spec/` first.
+7. **Specs before implementations.** Anything crossing a boundary (intent, pose record, combination,
+   match record, rules, agent API) is a versioned schema in `src/openroboxing/spec/` first.
 
 ## Canonical rates — use these constants, never literals
 

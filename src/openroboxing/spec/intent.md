@@ -2,21 +2,21 @@
 
 Version **3.0** · created 2026-08-07 · formalised 2026-08-07 by `M2-T4` · remodelled 2026-08-08 ·
 one continuous intent 2026-08-13 · aimed a leg at a time, and ended by the move rather than by a
-counter, 2026-08-17 · **a commit is a combination, and the approach is gone, 2026-08-28**
+counter, 2026-08-17 · **a commit is a combination, and the approach is gone, 2026-08-28** · `D6`
+lands and `Loadout` is deleted, 2026-08-28 (`M6` Phase 3, task A6)
 
 Defines how a player's action reaches the generator. This is a cross-boundary structure
 (`CLAUDE.md` invariant 7), so it is specified before `runtime/intents.py` is rewritten against it.
 
 Status: the model is decided — by the project owner,
 `docs/superpowers/specs/2026-08-27-motion-combinations-design.md`, decisions D1–D6 — and is
-specified here (`M6-T4`) before `runtime/intents.py` is rewritten against it (`M6-T5`).
-`runtime/intents.py` today still implements 2.2's approach and reads `SPEC_VERSION = "2.2"`; a test
-pairs this file's version with that constant, and it now fails until `M6-T5` lands — see Changelog.
+implemented. `runtime/intents.py` reads `SPEC_VERSION = "3.0"` (`M6-T5`); a test pairs this file's
+version with that constant.
 
 **`D6` — no loadout: the whole library shared and paged, nine combinations at a time — is
-owner-agreed but not yet implemented.** The client and protocol work it needs is a later phase.
-`Loadout` and per-seat loadout selection stay in the code, and "select a combination" below is
-described in terms of them, until that phase retires them.
+implemented.** The client and protocol work it needed (`spec/protocol.md` 0.6, `M6` Phase 3) has
+landed, and `Loadout` is deleted (`M6` Phase 3, task A6) — nothing in the codebase names it any
+more. "Select a combination" below describes the paged picker directly.
 
 `spec/pose_record.md` is unchanged by any of this — a combination *contains* pose records, one per
 keyframe, and does not replace the schema they use.
@@ -46,9 +46,10 @@ keyframe, and does not replace the schema they use.
 ## The player's loop
 
 1. **Select a combination** — 3–6 recorded key poses with recorded timing (`spec/combination.md`
-   0.1), from a library of ~120 built from the mocap corpus under `motions/`. Reached today through
-   the existing `Loadout` (unchanged in code; `D6` retires it later). This replaces "select a pose":
-   the unit of selection is no longer one key pose.
+   0.1), from a library of ~120 built from the mocap corpus under `motions/`. Both fighters carry
+   the whole library and page through it nine at a time (`D6`) — there is no per-seat loadout to
+   select from first. This replaces "select a pose": the unit of selection is no longer one key
+   pose.
 2. **Place the ghost** — drag it to where the combination's **last keyframe** should land: position
    only, world coordinates. There is no heading control any more — the ghost's heading is derived
    from the fighter's own heading and the combination's recorded turn, never chosen (see "The
@@ -293,7 +294,7 @@ over the whole combination (D2) — which a single pose record never needed.
 
 | Channel | What it carries | Replaces |
 |---|---|---|
-| `combination` | which recorded combination — 3–6 keyframes with recorded timing, from the shared library (reached via `Loadout` until `D6` lands) | `pose_slot` |
+| `combination` | which recorded combination — 3–6 keyframes with recorded timing, from the whole shared library (`D6`) | `pose_slot` |
 | `ghost_position` | where the combination's **last keyframe** must land: world `(x, y)` only | `placement` (which also carried a player-set heading) |
 | `commit_at` | tick the move should begin, in 50 Hz ticks | ours, unchanged |
 
@@ -435,7 +436,7 @@ absence:
 | `M6-T6` | the three forced-plan regression tests named above, against `runtime/reference.py` |
 | `M4-T4` | still owns ring size and queue depth; now measured against combination lengths, not walk-plus-pose lengths |
 | `M5-T2` | `TARGET_COMMIT_RATE` was calibrated against the 1.0–2.2 model and needs re-measuring again |
-| Client / protocol (`D6`, `spec/protocol.md`) | a later phase: whole-library paging, no loadout, ghost position only. Not implemented; `Loadout` stays in the code until it lands |
+| Client / protocol (`D6`, `spec/protocol.md`) | `M6` Phase 3: whole-library paging, no loadout, ghost position only. Implemented; `Loadout` is deleted (task A6) |
 
 ---
 
@@ -467,10 +468,15 @@ absence:
   itself, `approach_timeout_ticks` / `DEFAULT_APPROACH_TIMEOUT_TICKS`, `has_arrived`, `has_settled`,
   `POSE_DWELL_TICKS`, `MAX_DWELL_TICKS`, `Placement.heading` as a player-set field, and the
   per-commit `slot` / `adjustment` as the unit of selection. `D6` (no loadout, whole library,
-  nine-per-page paging) is owner-agreed but is a later phase — `Loadout` is unchanged in code until
-  then. Designed in `docs/superpowers/specs/2026-08-27-motion-combinations-design.md`, decisions
-  D1–D6; `SPEC_VERSION` in `intents.py` moves to `"3.0"` in the same change as the implementation
-  (`M6-T5`), and a test pairs the two — it fails from this commit until that one lands.
+  nine-per-page paging) was owner-agreed but a later phase as of this entry — `Loadout` stayed
+  unchanged in code until then. Designed in
+  `docs/superpowers/specs/2026-08-27-motion-combinations-design.md`, decisions D1–D6;
+  `SPEC_VERSION` in `intents.py` moves to `"3.0"` in the same change as the implementation
+  (`M6-T5`), and a test pairs the two.
+  **`D6` landed and `Loadout` was deleted in `M6` Phase 3 (task A6), 2026-08-28** — see this
+  file's own Status note above. Every remaining importer (tools, server, client, tests) was
+  ported to the whole shared library in the same phase; nothing in the codebase names `Loadout`
+  any more.
 - **2.2** (2026-08-17) — **a move ends when it is over.** `end_tick` is stamped rather than computed:
   `generator_intent` asks `has_settled(commit)` — has the body stopped closing on the pose? — and the
   queue advances on that instead of on `strike_at + POSE_DWELL_TICKS`. The counted dwell remains as

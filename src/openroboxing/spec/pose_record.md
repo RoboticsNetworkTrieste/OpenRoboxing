@@ -141,6 +141,7 @@ while one the *robot* cannot execute needs a finetune. `build_library` was writi
 number into the field the spec defined as the physics one.
 
 Only `generator_error_rad` gates admission today, because it is the one measured per pose.
-`tracking_error_rad` is measured per *run* rather than per pose (`tools/run_single.py --loadout`
-reports 0.098 rad mean, 0.63 rad max over the whole v0.1 library), so promoting it to a gate needs a
+`tracking_error_rad` is measured per *run* rather than per pose (`tools/run_single.py`, then run
+with a `--loadout` flag that has since been replaced by `--library` (`spec/intent.md` 3.0's `D6`),
+reported 0.098 rad mean, 0.63 rad max over the whole v0.1 library), so promoting it to a gate needs a
 per-pose trial that does not exist yet. Recorded when available; gate to follow.

@@ -325,12 +325,23 @@ def test_the_shipped_tree_poses_a_g1_exactly_as_mujoco_does(scene) -> None:
 
 
 def test_the_tree_covers_every_joint_the_pose_library_sets(scene) -> None:
-    """A joint an authored pose sets but the tree omits would be silently ignored by the ghost."""
-    from openroboxing.paths import LOADOUT_DIR
-    from openroboxing.runtime.intents import Loadout
+    """A joint an authored combination sets but the tree omits would be silently ignored by the
+    ghost.
 
-    loadout = Loadout.load(LOADOUT_DIR / "orthodox.json")
+    Ported for `spec/intent.md` 3.0's `D6`: the ghost is now drawn from a combination's keyframes
+    (`spec/protocol.md` 0.6), not a loadout slot's `PoseRecord`, so this checks every keyframe of
+    every combination in the real library rather than six loadout-selected poses.
+    """
+    from openroboxing.paths import COMBINATION_DIR
+    from openroboxing.studio import combination_record as cr
+
+    library = {p.stem: cr.load(p) for p in sorted(COMBINATION_DIR.glob("*.json"))}
+    assert library, f"no combinations in {COMBINATION_DIR}; run tools.import_motions first"
+
     exported = set(scene.description()["shadow_kinematics"]["joints"])
-    for slot, pose in loadout.slots.items():
-        missing = set(pose.joint_angles) - exported
-        assert not missing, f"slot {slot} ({pose.name}) sets {missing}, which the ghost cannot bend"
+    for name, record in library.items():
+        for index, keyframe in enumerate(record.keyframes):
+            missing = set(keyframe.joint_angles) - exported
+            assert not missing, (
+                f"{name} keyframe {index} sets {missing}, which the ghost cannot bend"
+            )

@@ -72,7 +72,7 @@ def test_openroboxing_paths_do_not_follow_gr00t_root(monkeypatch, tmp_path):
     paths = _reload_paths(monkeypatch, str(tmp_path))
     assert paths.OPENROBOXING_ROOT == paths.REPO_ROOT / "src/openroboxing"
     assert paths.POSE_DIR == paths.OPENROBOXING_ROOT / "poses"
-    assert paths.LOADOUT_DIR == paths.POSE_DIR / "loadouts"
+    assert paths.COMBINATION_DIR == paths.POSE_DIR / "v0.2/combinations"
     assert paths.FIXTURES_DIR == paths.REPO_ROOT / "tests/fixtures"
 
 
@@ -87,7 +87,7 @@ def test_display_path_names_upstream_artefacts_by_their_upstream_position(monkey
 
 def test_display_path_names_our_own_files_by_their_repo_position(monkeypatch):
     paths = _reload_paths(monkeypatch, None)
-    assert paths.display_path(paths.LOADOUT_DIR) == "src/openroboxing/poses/loadouts"
+    assert paths.display_path(paths.COMBINATION_DIR) == "src/openroboxing/poses/v0.2/combinations"
 
 
 def test_display_path_prefers_upstream_when_the_submodule_is_nested(monkeypatch):

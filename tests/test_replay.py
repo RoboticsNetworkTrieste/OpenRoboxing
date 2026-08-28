@@ -48,7 +48,7 @@ def arena():
 def _combination(name: str = "combo-a") -> CombinationRecord:
     """A small, admitted combination — cheap enough to build a `FighterRuntime` from.
 
-    `spec/intent.md` 3.0: a commit carries a combination and a ghost, not a `Loadout` slot. Each
+    `spec/intent.md` 3.0: a commit carries a combination and a ghost, not a loadout slot. Each
     test file in this repo keeps its own copy of this builder rather than sharing a fixtures module
     (see e.g. `test_server.py`, `test_fight.py`); this replay module only needs one entry, since it
     never actually generates through it — it just needs a valid library to build a `FighterRuntime`

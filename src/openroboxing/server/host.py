@@ -201,10 +201,9 @@ class MatchHost:
         self.record = MatchRecord(
             match_id=match_id,
             format=self.format,
-            # `spec/match_record.md`'s `FighterEntry.loadout {name, version, slots}` is still written
-            # against 1.0-2.2's loadout and has not caught up to `D6` (a later task's job, alongside
-            # `runtime/replay.py`) — this is provisional until it does, and deliberately does not
-            # invent a schema this module does not own.
+            # `FighterEntry.combinations` (`spec/match_record.md` 0.3, task A6): the names in the
+            # whole shared library this fighter had access to, not a loadout — `D6` retired the
+            # per-seat loadout, so both fighters' lists are the same one.
             fighters={
                 f: {"handle": f, "combinations": sorted(libraries[f])} for f in FIGHTERS
             },

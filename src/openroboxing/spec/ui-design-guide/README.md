@@ -72,7 +72,7 @@ pixel-accurately. The only deliberately low-fidelity elements are:
   their queued-but-unstarted commits are never transmitted and must never be inferred or faked.
 - **No fabricated certainty.** Never render `null` timing fields as `0` or as "done".
 - **No second scoring system.** Do not invent a "who's winning" number; use `share`.
-- On the projector: **no controls at all**, and no loadouts.
+- On the projector: **no controls at all**, and no picker.
 
 ---
 
@@ -203,14 +203,24 @@ itself.**
 
 **Inner grid**: `grid-template-columns: 344px 268px minmax(0,1fr)`, gap 16, `flex:1`, `min-height:0`.
 
-1. **Loadout** (344px). Label `loadout · 6 slots` + right note (`1 — 6`, or `locked — queue full`).
-   `grid-template-columns:repeat(3,1fr)`, gap 6 → 2 rows of 3. Each slot: 1px hairline, radius 2,
-   `padding:7px 8px`, `--surface-glass` fill; key in mono 12px 600; pose name 11px/1.2
-   `--text-secondary`, `margin-top:3px`, `min-height:20px`; duration in mono 10px `tabular-nums`
-   (`pose_seconds[slot]`, 2 dp, ` s`).
-   **Staged slot**: border `1.5px --accent`, fill `--accent-quiet`, key and duration in
+1. **Picker** (344px). Both fighters carry the whole ~120-combination library and page through it
+   nine at a time (`D6`) — there is no per-seat loadout to label a slot count on any more. Label
+   the select-key range (`1 — 9`, or `U I O J K L M , .`) + right note (`locked — queue full`).
+   `grid-template-columns:repeat(3,1fr)`, gap 6 → 3 rows of 3, one page of `welcome`'s
+   `combinations` (sorted by name). Each cell: 1px hairline, radius 2, `padding:7px 8px`,
+   `--surface-glass` fill; select key in mono 12px 600; combination name 11px/1.2
+   `--text-secondary`, `margin-top:3px`, `min-height:20px`, wrapped rather than truncated; duration
+   in mono 10px `tabular-nums` (the entry's own `seconds`, 2 dp, ` s`). A cell past the end of the
+   current page (last page of 14, short) or belonging to a seat this browser was never sent a
+   `welcome` for renders **empty**: 45° hatch fill, muted key and name — never a blank the eye has
+   to double back on.
+   **Staged cell**: border `1.5px --accent`, fill `--accent-quiet`, key and duration in
    `--text-accent`, name in `--text-strong`, plus a `staged` tab (8px `.18em`, `--accent` fill,
    `--text-on-accent`) pinned `top:-7px;right:-1px`.
+   **Paging**, directly under the grid: a prev button, a page indicator (`3 / 14`, mono, muted,
+   `tabular-nums`), a next button — outline chips, `--surface-3` fill, hover to `--accent` border.
+   Wraps at either edge rather than dead-ending, since 14 pages is short enough that wrapping beats
+   a wall.
    When the queue is full the whole grid drops to `opacity:.42`.
 2. **Cost of this commit** (268px) — *the most important block on the page.*
    Border 1px `--border-accent` with `border-top:1.5px solid --accent`, fill `--accent-quiet`,
@@ -358,10 +368,12 @@ ink ground with a field, hairline, radius 3, `padding:22px`, opening on a `state
 6. **Remote opponent** — the private-queue variant. Only the executing entry renders normally; the
    other four cells are 1px hairline with a **45° hatch** fill
    (`repeating-linear-gradient(45deg, var(--surface-glass) 0 5px, transparent 5px 10px)`) labelled
-   `private`. Footer: `no loadout · no ghost · no staged slot`.
+   `private`. Footer: `no picker · no ghost · no staged cell`.
    A queued-but-unstarted commit is withheld by design — showing it would hand the opponent a
    readable list of your next four moves, which is exactly the risk the queue is meant to be. Draw it
-   as **withheld**, not as unknown.
+   as **withheld**, not as unknown. (The picker itself is empty for a different reason — `D6`
+   retired the per-seat loadout, so there is nothing left to keep private there; this browser simply
+   never received a `welcome` for a seat it does not hold.)
 
 ---
 
@@ -422,7 +434,7 @@ All values are TORC design-system tokens. The full definitions ship in **`tokens
 | `--surface-1` | `#101E18` | every card and panel |
 | `--surface-2` | `#16281F` | raised, hover |
 | `--surface-3` | `#1E3529` | inset, slider track, queue `waiting` fill, key chips |
-| `--surface-glass` | `rgba(234,242,237,.04)` | loadout slots, teaching bar |
+| `--surface-glass` | `rgba(234,242,237,.04)` | picker cells, teaching bar |
 | `--surface-header` | `rgba(8,19,15,.88)` + `blur(14px)` | header, ticker |
 | `--surface-scrim` | `rgba(8,19,15,.60)` | the knockdown banner |
 

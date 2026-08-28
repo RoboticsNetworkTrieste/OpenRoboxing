@@ -111,7 +111,6 @@ from openroboxing.runtime.generator import GeneratorIntent
 from openroboxing.runtime.sequence import CombinationRunner
 from openroboxing.runtime.warp import warp
 from openroboxing.spec.constants import COMMIT_HORIZON_TICKS, MAX_OUTSTANDING_COMMITS
-from openroboxing.studio.pose_record import PoseRecord, PoseRecordError, validate
 
 if TYPE_CHECKING:  # `runtime` does not import `studio` at module level - see generator.py's note.
     from openroboxing.studio.combination_record import CombinationRecord
@@ -123,95 +122,6 @@ SPEC_VERSION = "3.0"
 
 class IntentError(RuntimeError):
     """An intent was malformed, or the commit rule was broken. Never recovered from silently."""
-
-
-# NOTE (D6, `docs/superpowers/specs/2026-08-27-motion-combinations-design.md`) — the owner-agreed
-# direction is *no* loadout: the whole combination library, shared by both fighters and paged through
-# nine at a time. That is a later phase ("Client and protocol" in the design doc, `spec/intent.md`'s
-# `D6` note) and is not implemented here. `Loadout` below is dead to `IntentTimeline` — nothing in
-# this module reads it — and survives only because 23 files across the tools, server and client tests
-# still import it. It stays until that phase retires it (Plan 3), not because it is still the model.
-@dataclass(frozen=True)
-class Loadout:
-    """The poses a fighter brought to the match, keyed by the slot the player presses.
-
-    Fixed for the duration of a match: swapping a loadout mid-fight would let a player carry more
-    than six moves, which is the constraint the format is built on.
-    """
-
-    name: str
-    version: str
-    slots: Mapping[str, PoseRecord]
-
-    def resolve(self, slot: str) -> PoseRecord:
-        if slot not in self.slots:
-            raise IntentError(
-                f"slot {slot!r} is not in loadout {self.name!r}; it has "
-                f"{sorted(self.slots)}"
-            )
-        return self.slots[slot]
-
-    @classmethod
-    def load(cls, path, library_dir=None) -> Loadout:
-        """Load a loadout: a name, a library version, and slot → pose *name*.
-
-        Slots hold names rather than inline angles so a loadout is a few lines a human can read and
-        edit, and so two loadouts naming the same pose cannot disagree about what it is.
-
-        Loadouts live in ``poses/loadouts/`` and the poses they name in ``poses/<version>/``, so
-        ``library_dir`` defaults to ``<loadout's parent's parent>/<version>``. Keeping them in
-        separate directories is not tidiness: :func:`load_library` reads *every* JSON file it finds,
-        so a loadout sitting among the poses is parsed as a malformed pose.
-        """
-        import json
-        from pathlib import Path
-
-        from openroboxing.studio.pose_record import load_library
-
-        path = Path(path)
-        try:
-            data = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError) as exc:
-            raise IntentError(f"{path}: cannot read loadout ({exc})") from exc
-
-        for key in ("name", "version", "slots"):
-            if key not in data:
-                raise IntentError(f"{path}: loadout is missing {key!r}")
-
-        resolved = (
-            Path(library_dir) if library_dir else path.parent.parent / str(data["version"])
-        )
-        if not resolved.is_dir():
-            raise IntentError(
-                f"{path}: no pose library at {resolved}; a loadout for version "
-                f"{data['version']!r} expects one beside its own directory"
-            )
-        library = load_library(resolved)
-        slots: dict[str, PoseRecord] = {}
-        for slot, pose_name in data["slots"].items():
-            if pose_name not in library:
-                raise IntentError(
-                    f"{path}: slot {slot!r} names pose {pose_name!r}, which is not in the library; "
-                    f"it has {sorted(library)}"
-                )
-            slots[str(slot)] = library[pose_name]
-
-        return cls(name=data["name"], version=data["version"], slots=slots)
-
-    def validate(self, require_admitted: bool = True) -> None:
-        """Raise unless every pose is loadable, and admitted when the match requires it."""
-        if not self.slots:
-            raise IntentError(f"loadout {self.name!r} has no slots")
-        for slot, pose in self.slots.items():
-            try:
-                validate(pose)
-            except PoseRecordError as exc:
-                raise IntentError(f"loadout {self.name!r} slot {slot!r}: {exc}") from exc
-            if require_admitted and not pose.is_admitted():
-                raise IntentError(
-                    f"loadout {self.name!r} slot {slot!r} holds pose {pose.name!r}, which is "
-                    f"{pose.admission!r}; a match may only use admitted poses"
-                )
 
 
 #: The clip a fighter stands in at the opening bell, **before the first commit of a round has become
@@ -326,8 +236,7 @@ class IntentTimeline:
 
     Args:
         library: every combination this fighter may commit, keyed by the name a player selects —
-            the whole shared library, per D6 (``spec/intent.md``'s note on the eventual retirement
-            of :class:`Loadout`).
+            the whole shared library, both fighters identical, per D6 (``spec/intent.md``).
         horizon_ticks: **minimum** lead from commit to execution. Defaults to the canonical
             :data:`~openroboxing.spec.constants.COMMIT_HORIZON_TICKS`; a match may parameterise it.
         max_outstanding: how many commits may be unfinished at once. Defaults to

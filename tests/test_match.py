@@ -303,7 +303,7 @@ def _match_record(world: _ScriptedWorld | None = None) -> MatchRecord:
         match_id="test-0001",
         match_format=SHORT,
         fighters={
-            f: {"handle": f, "loadout": {"name": "orthodox", "version": "0.1", "slots": {}}}
+            f: {"handle": f, "combinations": ["combo-a", "combo-b"]}
             for f in FIGHTERS
         },
         versions={"policy": "sonic-model12", "pose_library": "0.1", "rules": "0.1"},
@@ -329,7 +329,7 @@ def test_the_record_holds_every_field_the_spec_names() -> None:
     assert data["schema_version"] == SCHEMA_VERSION
     assert set(data["format"]) == {"rounds", "round_ticks", "get_up_window_ticks", "tick_hz"}
     assert set(data["fighters"]) == set(FIGHTERS)
-    assert set(data["fighters"]["red"]) == {"handle", "loadout"}
+    assert set(data["fighters"]["red"]) == {"handle", "combinations"}
 
     for round_data in data["rounds"]:
         assert set(round_data) == {
@@ -437,34 +437,40 @@ def test_a_full_three_round_match_runs_headless(tmp_path) -> None:
 
     Runs the **real** format — three 60 s rounds — because the criterion says a full match, and a
     shortened one would not exercise the generator long enough to be evidence of anything.
+
+    Ported for `spec/intent.md` 3.0's `D6` (task A6): both fighters draw from the whole on-disk
+    combination library rather than a loadout, scripted the same way `tools/run_match.py` scripts
+    a real match — reusing its `_script` rather than inventing a second copy of that spacing/orbit
+    arithmetic. The on-disk library is all-draft (telegraph and tracking error have not been
+    measured), so this passes `require_admitted=False`, exactly as `run_match.py --allow-draft`
+    does.
     """
-    from openroboxing.paths import LOADOUT_DIR
+    from openroboxing.paths import COMBINATION_DIR
     from openroboxing.runtime.fight import FightWorld, ScriptedPilot
-    from openroboxing.runtime.intents import Loadout
     from openroboxing.runtime.pool import fighter_seed
+    from openroboxing.studio import combination_record as cr
+    from openroboxing.tools.run_match import _script
 
-    loadout = Loadout.load(LOADOUT_DIR / "orthodox.json")
-    slots = sorted(loadout.slots)
+    library = {p.stem: cr.load(p) for p in sorted(COMBINATION_DIR.glob("*.json"))}
+    assert library, f"no combinations in {COMBINATION_DIR}; run tools.import_motions first"
+    order = sorted(library)
 
+    default_format = MatchFormat()
     world = FightWorld(
-        loadouts={f: loadout for f in FIGHTERS},
+        libraries={f: library for f in FIGHTERS},
         pilots={
-            "red": ScriptedPilot([(200 + 300 * i, slots[i % len(slots)]) for i in range(8)]),
-            "blue": ScriptedPilot([(350 + 300 * i, slots[-1 - i % len(slots)]) for i in range(8)]),
+            f: ScriptedPilot(_script(f, order, library, default_format.round_ticks))
+            for f in FIGHTERS
         },
         match_seed=1234,
+        require_admitted=False,
     )
     match = Match(
         world,
         match_id="acceptance",
-        fighters={
-            f: {
-                "handle": f,
-                "loadout": {"name": loadout.name, "version": loadout.version, "slots": slots},
-            }
-            for f in FIGHTERS
-        },
-        versions={"pose_library": loadout.version, "rules": SCHEMA_VERSION},
+        match_format=default_format,
+        fighters={f: {"handle": f, "combinations": order} for f in FIGHTERS},
+        versions={"pose_library": library[order[0]].library_version, "rules": SCHEMA_VERSION},
         seeds={"match_seed": 1234, **{f: fighter_seed(1234, f) for f in FIGHTERS}},
     )
     record = match.run()

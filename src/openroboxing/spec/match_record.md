@@ -95,7 +95,8 @@ MatchRecord
 
 FighterEntry
   handle           str
-  loadout          {name, version, slots: {slot: pose_name}}
+  combinations     [str, ...]   <- 0.3; replaces the 1.0-2.2 loadout, both fighters carry the
+                                    same whole shared library (`spec/intent.md` 3.0's `D6`)
 
 RoundRecord
   index            int, 0-based
@@ -249,6 +250,9 @@ argument about how hard a punch landed is settled by the record, or not at all.
   recorded so a move that could not track its plan cleanly is visible in the record rather than
   silent. No change to `HitEvent`, `KnockdownEvent`, the state trace, or anything upstream of a
   commit's own shape.
+  `FighterEntry.loadout` (task A6, 2026-08-28) becomes `FighterEntry.combinations`: the names in
+  the whole shared library a fighter had access to, not a six-slot loadout — the same `D6` change,
+  applied to the one other place a match record still named a loadout.
 - **0.2** (2026-08-08) — added `arena`, the `ArenaConfig` a match was fought in, so a record stays
   replayable once `M4-T4` starts changing the ring. Records without it are read as the defaults.
   Added *What replays, and what is a reconstruction* above; no field changed meaning.

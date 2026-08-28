@@ -11,21 +11,28 @@ Transport: `welcome` once on connect, `state` at 30 Hz, `event` broadcast, `erro
 
 ## From `welcome` (once, on connect)
 
+> This table documents the pre-`D6` payload (`spec/protocol.md` 0.4/0.5's per-seat `loadout`,
+> `pose_seconds`, `horizons`). `D6` retired the per-seat loadout: `welcome` now ships `combinations`
+> — the whole shared library, `seconds` and `pose` per entry, identical for every seat and for a
+> spectator — see `spec/protocol.md` 0.6. Kept here for the fields this mapping still shares
+> (`format`, `arena`, `handles`); the loadout-shaped rows below are historical.
+
 | Field | Where it lands | Formatting |
 |---|---|---|
 | `seat` | which panel gets the key hints and the ghost; `spectator` → the `/screen` layout | — |
-| `loadout["1".."6"]` | the 6 loadout slot names | verbatim, 11px, lowercase as sent |
-| `pose_seconds["1".."6"]` | the per-slot duration | `toFixed(2) + " s"`, mono tabular |
-| `horizons["1".."6"]` | Pose Studio token count and its 16-cell strip | integer; `tokens × 4 / 30 = seconds` |
-| `poses` | the ghost's joint angles, run through `/scene.json` locally | never displayed as numbers |
+| `loadout["1".."6"]` *(pre-`D6`)* | the 6 loadout slot names | verbatim, 11px, lowercase as sent |
+| `pose_seconds["1".."6"]` *(pre-`D6`)* | the per-slot duration | `toFixed(2) + " s"`, mono tabular |
+| `horizons["1".."6"]` *(pre-`D6`)* | Pose Studio token count and its 16-cell strip | integer; `tokens × 4 / 30 = seconds` |
+| `poses` *(pre-`D6`)* | the ghost's joint angles, run through `/scene.json` locally | never displayed as numbers |
 | `approach_speed_m_s` | denominator of the walk estimate | not displayed |
 | `format.rounds` | `round N / 3` | integer |
 | `format.round_ticks`, `tick_hz` | clock conversion | `clock_ticks / 50` seconds |
 | `arena.ring_size` | ring dimension label, map scale (100 units = 1 m) | `4.90 m` |
 | `handles` (spectator only) | corner names on `/screen` | verbatim |
 
-A **spectator's** welcome carries no `loadout` and no `poses` — a projector must not leak what each
-fighter has available. Build `/screen` so it never reads those fields.
+A **spectator's** welcome used to carry no `loadout` and no `poses` — a projector must not leak what
+each fighter has available. Under `D6` there is no loadout left to leak, so a spectator's `welcome`
+now carries the same `combinations` a seat's does (`spec/protocol.md` 0.6).
 
 ---
 
@@ -66,11 +73,15 @@ says so.
 
 ### Per seat — `seats.red` / `seats.blue`
 
+> `staged`, `placement` and the queue-cell fields below predate `spec/intent.md` 3.0's combination
+> model and `D6`'s picker; `placement` is `ghost` now (position only, no heading), and `staged`
+> names a combination, not a loadout slot. See `spec/protocol.md` 0.6 for the current shape.
+
 | Field | Readout | Rule |
 |---|---|---|
 | `handle` | the corner name | verbatim |
 | `hits_landed` | the hit tally | integer |
-| `staged` | which loadout slot renders staged | `null` → no slot is staged, and the cost block shows `—` / `nothing staged` |
+| `staged` | which picker cell renders staged | `null` → no cell is staged, and the cost block shows `—` / `nothing staged` |
 | `position` | the fighter's live root pose in the canvas | **public for both seats** |
 | `placement` | your own aimed placement | own seat only; sent to the server only at the moment of commit |
 | `anchor` | the anchor marker, and the origin of the walk measurement | own seat only. **This is where the queue leaves you** — the last queued commit's placement, or your current position when the queue is empty. It is stable while a move plays out, unlike `position` |
@@ -98,7 +109,7 @@ has not been thrown.
 | Field | Readout | Rule |
 |---|---|---|
 | `pose` | the cell's pose name | verbatim, ellipsis on overflow |
-| `slot` | not printed in the cell | the loadout bar already carries the key |
+| `slot` *(pre-`D6`)* | not printed in the cell | the picker already carries the key |
 | `commit_at`, `strike_at`, `end_tick` | the timing cell | **`null` until the move reaches each stage.** `null` renders `—`, never `0`, never "done". Only the walking cell prints anything: `arrives —` |
 | `issued_at` | not displayed | — |
 | `placement` | the walk path target for the walking entry | own seat only |

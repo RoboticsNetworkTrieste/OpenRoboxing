@@ -91,7 +91,7 @@ def test_locate_inverts_display_path_in_the_default_configuration(monkeypatch):
     importlib.reload(paths)
 
     assert paths.locate(paths.display_path(paths.POLICY_ENCODER_ONNX)) == paths.POLICY_ENCODER_ONNX
-    assert paths.locate(paths.display_path(paths.LOADOUT_DIR)) == paths.LOADOUT_DIR
+    assert paths.locate(paths.display_path(paths.COMBINATION_DIR)) == paths.COMBINATION_DIR
 
 
 def test_locate_inverts_display_path_when_upstream_is_outside_the_repo(monkeypatch):
@@ -102,7 +102,7 @@ def test_locate_inverts_display_path_when_upstream_is_outside_the_repo(monkeypat
     importlib.reload(paths)
 
     assert paths.locate(paths.display_path(paths.POLICY_ENCODER_ONNX)) == paths.POLICY_ENCODER_ONNX
-    assert paths.locate(paths.display_path(paths.LOADOUT_DIR)) == paths.LOADOUT_DIR
+    assert paths.locate(paths.display_path(paths.COMBINATION_DIR)) == paths.COMBINATION_DIR
 
 
 def test_verify_finds_upstream_assets_with_no_explicit_root(monkeypatch):
