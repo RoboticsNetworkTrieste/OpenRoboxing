@@ -1,6 +1,10 @@
 /* Sparring bench — TORC ink ground, spec/ui-design-guide/. All colours come off the semantic
- * aliases; the only literals are the two seat identities and the five phase-band colours, which are
+ * aliases; the only literals are the two seat identities and the four phase-band colours, which are
  * validated against the ink chart surface (see docs/superpowers/specs/2026-08-17 design, Task 11).
+ *
+ * Four phases, not 0.1-0.2's five (B3, ported for spec/intent.md 3.0): a running commit no longer
+ * splits into an approach and a dwell — a combination is one continuous piece of recorded motion —
+ * so `--phase-approach`/`--phase-dwell` collapse into one `--phase-running`.
  */
 
 :root {
@@ -8,8 +12,7 @@
   --seat-blue: #6bb6ff;
   --phase-opening: #93AC9E;
   --phase-waiting: #3FA9F5;
-  --phase-approach: #BC7B4C;
-  --phase-dwell: #4FD1A0;
+  --phase-running: #4FD1A0;
   --phase-hold: #B7C9BE;
 }
 
@@ -34,9 +37,17 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 }
 .machine-chip[data-state="OPENING"]  { border-color: var(--phase-opening);  color: var(--phase-opening); }
 .machine-chip[data-state="WAITING"]  { border-color: var(--phase-waiting);  color: var(--phase-waiting); }
-.machine-chip[data-state="APPROACH"] { border-color: var(--phase-approach); color: var(--phase-approach); }
-.machine-chip[data-state="DWELL"]    { border-color: var(--phase-dwell);    color: var(--phase-dwell); }
+.machine-chip[data-state="RUNNING"]  { border-color: var(--phase-running);  color: var(--phase-running); }
 .machine-chip[data-state="HOLD"]     { border-color: var(--phase-hold);     color: var(--phase-hold); }
+
+/* The bench's own persistent disclosure: every combination on disk today is unmeasured
+   (`admission="draft"`), and a session run that way must say so on screen, not silently
+   (`spec/intent.md` "Admission is enforced at construction"). */
+.drafts-chip {
+  font-family: var(--font-mono); font-size: var(--text-3xs); letter-spacing: .06em;
+  text-transform: uppercase; padding: 2px 8px; border-radius: var(--radius-sm);
+  border: var(--border-hairline) solid var(--status-warn); color: var(--status-warn);
+}
 
 .action {
   font-family: var(--font-mono); font-size: var(--text-3xs); letter-spacing: .06em;
@@ -88,16 +99,65 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; }
 .sw-red { background: var(--seat-red); }
 .sw-aim { background: var(--seat-red); opacity: .35; }
-.sw-plan { background: var(--phase-approach); opacity: .6; }
-.sw-trail { background: var(--phase-dwell); height: 2px; width: 14px; }
+.sw-plan { background: var(--phase-running); opacity: .6; }
+.sw-trail { background: var(--phase-running); height: 2px; width: 14px; }
 
 /* ── loadout / queue ────────────────────────────────────────────────────────── */
-.loadout { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
-.slot { display: flex; gap: 8px; align-items: baseline; padding: 4px 8px;
-  border: var(--border-hairline) solid var(--border-subtle); border-radius: var(--radius-sm); }
-.slot .key { font-family: var(--font-mono); color: var(--text-accent); font-size: var(--text-2xs); }
-.slot .name { font-size: var(--text-xs); color: var(--text-body); }
-.slot.staged { border-color: var(--accent); background: var(--accent-quiet); }
+/* 3 x 3, nine at a time (`D6`) — the same grid `client/style.css`'s match picker uses; the sparring
+   bench pages through the identical shared library, not a six-slot loadout any more (B3). */
+.loadout { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.slot {
+  position: relative;
+  border: var(--border-hairline) solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 7px 8px;
+  background: var(--surface-glass);
+  min-width: 0;
+  cursor: pointer;
+}
+.slot .key {
+  display: block; font-family: var(--font-mono); font-size: var(--text-2xs);
+  font-weight: var(--fw-semibold); color: var(--text-body);
+}
+.slot .name {
+  display: block; font-size: var(--text-3xs); line-height: 1.2; color: var(--text-secondary);
+  margin-top: 3px; min-height: 20px; overflow-wrap: anywhere;
+}
+.slot .dur {
+  display: block; font-family: var(--font-mono); font-size: var(--text-4xs);
+  color: var(--text-muted); font-variant-numeric: tabular-nums;
+}
+/* Past the end of the library on the last page — hatched, so it reads as nothing-here rather than
+   a blank the eye has to double back on (same treatment as the match client's picker). */
+.slot.empty {
+  background: repeating-linear-gradient(45deg, var(--surface-glass) 0 5px, transparent 5px 10px);
+  cursor: default;
+}
+.slot.empty .name, .slot.empty .key { color: var(--text-muted); }
+.slot.staged { border: var(--border-line) solid var(--accent); background: var(--accent-quiet); }
+.slot.staged .key, .slot.staged .dur { color: var(--text-accent); }
+.slot.staged .name { color: var(--text-strong); }
+
+.loadout-paging {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--space-2); margin-top: 8px;
+}
+.page-btn {
+  font-family: var(--font-mono); font-size: var(--text-3xs); letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-secondary); background: var(--surface-3);
+  border: var(--border-hairline) solid var(--border-strong); border-radius: var(--radius-md);
+  padding: 5px 9px; cursor: pointer;
+}
+.page-btn:hover { color: var(--text-strong); border-color: var(--accent); }
+.page-indicator {
+  font-family: var(--font-mono); font-size: var(--text-3xs); color: var(--text-muted);
+  font-variant-numeric: tabular-nums; letter-spacing: .05em;
+}
+
+/* The reach hint (`spec/intent.md` "Feasibility") — a preview of the same check the host enforces
+   at commit time, never the decision itself. */
+.reach-line { font-family: var(--font-mono); font-size: var(--text-3xs); color: var(--text-muted); }
+.reach-line.rejected { color: var(--status-warn); }
 
 .queue { display: flex; flex-direction: column; gap: 3px; }
 .qrow {
@@ -108,9 +168,7 @@ body { display: flex; flex-direction: column; overflow: hidden; }
 .qrow .pose { color: var(--text-body); font-size: var(--text-2xs); }
 .qrow .spans { font-variant-numeric: tabular-nums; }
 .qrow.waiting   { border-left-color: var(--phase-waiting); }
-.qrow.approach  { border-left-color: var(--phase-approach); }
-.qrow.dwell     { border-left-color: var(--phase-dwell); }
-.qrow.short     { border-left-color: var(--status-warn); }
+.qrow.running   { border-left-color: var(--phase-running); }
 .qrow .state { text-transform: uppercase; letter-spacing: .08em; }
 
 .error { margin-top: var(--space-2); padding: 6px 10px; border-left: 2px solid var(--status-warn);

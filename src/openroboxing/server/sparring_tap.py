@@ -1,6 +1,6 @@
 """The sparring bench's recorder: per-tick capture, state derivation, the viz transform.
 
-Implements `spec/sparring_protocol.md` 0.1. Pure numpy — no aiohttp, no mujoco — so everything here
+Implements `spec/sparring_protocol.md` 0.3. Pure numpy — no aiohttp, no mujoco — so everything here
 runs in a test without a GPU or a checkpoint.
 
 Conventions
@@ -14,27 +14,34 @@ Conventions
   and the encoder never consumes its root position, so its "world position" exists only for
   drawing. :func:`viz_world_path` applies the displacement-from-now at the robot's true position —
   the coherent inverse of ``fight.to_generator_frame``'s rotation.
+
+Ported for `spec/intent.md` 3.0 (B3)
+-------------------------------------
+0.1-0.2's machine had five states because a running commit had two phases — an approach that walked
+to a placement, then a dwell that held the struck pose. 3.0 deleted the phase distinction along with
+the approach: a combination is one continuous piece of recorded motion, so there is exactly one
+running state left (``RUNNING``), and where inside a commit's own legs it is now lives on the queue
+entry (`server/sparring_app.py::bench_queue_entry`'s ``leg_index``/``leg_count``), not on the machine.
 """
 
 from __future__ import annotations
 
-from collections import deque
 import io
 import math
+from collections import deque
 
 import numpy as np
 
 from openroboxing.spec.constants import NUM_JOINTS, QPOS_DIM, TICK_HZ
 
 __all__ = [
-    "APPROACH",
-    "DWELL",
     "HOLD",
     "MACHINE_STATES",
     "OPENING",
-    "TapError",
+    "RUNNING",
     "WAITING",
     "DebugTap",
+    "TapError",
     "derive_machine_state",
     "viz_ghost",
     "viz_world_path",
@@ -42,9 +49,12 @@ __all__ = [
 ]
 
 #: The intent state machine, `spec/sparring_protocol.md` §The state machine. Indices are what the
-#: tap stores; names are what the wire carries.
-MACHINE_STATES = ("OPENING", "WAITING", "APPROACH", "DWELL", "HOLD")
-OPENING, WAITING, APPROACH, DWELL, HOLD = range(5)
+#: tap stores; names are what the wire carries. Four states, not 0.1-0.2's five: `spec/intent.md`
+#: 3.0 removed the approach/dwell split a running commit used to have, so `APPROACH` and `DWELL`
+#: collapse into one `RUNNING`.
+MACHINE_STATES = ("OPENING", "WAITING", "RUNNING", "HOLD")
+OPENING, WAITING, RUNNING, HOLD = range(4)
+
 
 #: Default recording cap: 10 minutes at the tick rate. Beyond it the oldest ticks fall off.
 DEFAULT_MAX_TICKS = 10 * 60 * TICK_HZ
@@ -55,17 +65,23 @@ class TapError(RuntimeError):
 
 
 def derive_machine_state(commits, tick: int) -> int:
-    """Which of the five states the red timeline is in at ``tick``. Read-only.
+    """Which of the four states the red timeline is in at ``tick``. Read-only.
 
     Args:
         commits: the timeline's commit log, in issue order (``IntentTimeline.commits``).
         tick: the 50 Hz tick to classify.
+
+    A commit that is executing wins outright — there is only one running state left. Otherwise, any
+    commit that exists and has not finished (``is_scheduled``) but is not yet executing means the
+    queue is waiting on the horizon window or the move in front of it. Failing both, the reversed
+    scan finds the most recent commit that has *actually* finished by ``tick`` — necessary because
+    scrubbing to a tick before a later-issued commit's own history must not report ``HOLD`` just
+    because the commit log, as a whole, is non-empty (`Commit.end_tick` is ``None`` until a commit
+    starts, and a scrub tick can predate that).
     """
     for commit in commits:
         if commit.is_executing(tick):
-            if commit.strike_at is None or tick < commit.strike_at:
-                return APPROACH
-            return DWELL
+            return RUNNING
     if any(c.is_scheduled(tick) for c in commits):
         return WAITING
     for commit in reversed(commits):
@@ -112,6 +128,10 @@ def viz_ghost(
 ) -> dict:
     """The plan ghost: the reference frame the encoder is looking at, posed for the client.
 
+    Called ``plan_ghost`` on the wire (`spec/sparring_protocol.md`) to keep it apart from a commit's
+    own ``ghost`` — the player's committed target, a name `spec/intent.md` 3.0 introduced after this
+    function's name was already taken.
+
     Yaw-only — the client's shadow FK takes a heading, not a full quaternion — which is the
     documented 0.1 limitation in `spec/sparring_protocol.md`.
     """
@@ -151,11 +171,10 @@ _COLUMNS: dict[str, tuple[tuple[int, ...], str]] = {
     "root_h_red": ((), "f4"),
     "root_h_blue": ((), "f4"),
     "separation": ((), "f4"),
-    "dist_target": ((), "f4"),  # NaN when no placement is being approached
+    "dist_target": ((), "f4"),  # NaN when no commit is executing
     # The same distance, measured on the **plan** instead of the body: the reference frame the
-    # encoder is chasing, against the same placement. The pair is the whole diagnosis of an
-    # approach — MotionBricks is kinematic and arrives every time, the body under physics is what
-    # has to get there, and only the gap between these two says which half is failing.
+    # encoder is chasing, against the same ghost. The pair is a trend across a whole commit now
+    # rather than an arrival test — see `spec/sparring_protocol.md` §"Two distances, not one".
     "dist_plan": ((), "f4"),
     "step_ms": ((), "f4"),
     "machine": ((), "i1"),
@@ -166,7 +185,7 @@ _COLUMNS: dict[str, tuple[tuple[int, ...], str]] = {
 class DebugTap:
     """Per-tick recording of a sparring session, in memory, ring-buffered.
 
-    Append exactly one row per stepped tick, in tick order. Events (replans, the commit log) are
+    Append exactly one row per stepped tick, in tick order. Events (replans, keyframe boundaries) are
     kept separately with absolute ticks, so trimming the ring never rewrites them.
     """
 
@@ -180,12 +199,18 @@ class DebugTap:
         }
         #: ``(tick, forced, plan_frames)`` per real replan of the red generator.
         self.replans: list[tuple[int, bool, int]] = []
+        #: ``(tick, commit_ordinal, leg, err_mean, err_max)`` per leg boundary a commit crosses —
+        #: `spec/sparring_protocol.md` §"Per-keyframe tracking error", 3.0's replacement for the
+        #: settle test the counted dwell used to run: a leg's end is now exact arithmetic, and the
+        #: tracking error at that tick is what is still worth recording about it.
+        self.keyframe_events: list[tuple[int, int, int, float, float]] = []
 
     def clear(self) -> None:
         self._ticks.clear()
         for column in self._columns.values():
             column.clear()
         self.replans = []
+        self.keyframe_events = []
 
     def __len__(self) -> int:
         return len(self._ticks)
@@ -237,11 +262,11 @@ class DebugTap:
 
         The absolute-error mean/max per tick are computed here so the client never re-derives them.
 
-        **A gap is ``None``, never ``NaN``.** ``dist_target`` is legitimately NaN whenever no
-        placement is being approached, and Python's ``json`` writes that as a bare ``NaN`` token
-        that JavaScript's ``JSON.parse`` refuses — one un-approached tick therefore threw away the
-        whole payload, and the charts stayed blank for the entire session (2026-08-17: 970 of 1052
-        samples). ``None`` becomes ``null``, which the client already draws as the gap it is.
+        **A gap is ``None``, never ``NaN``.** ``dist_target`` is legitimately NaN whenever no commit
+        is executing, and Python's ``json`` writes that as a bare ``NaN`` token that JavaScript's
+        ``JSON.parse`` refuses — one un-executing tick therefore threw away the whole payload, and
+        the charts stayed blank for the entire session (2026-08-17: 970 of 1052 samples). ``None``
+        becomes ``null``, which the client already draws as the gap it is.
         """
         if stride < 1:
             raise TapError(f"stride must be at least 1, got {stride}")
@@ -254,7 +279,7 @@ class DebugTap:
 
         indices = range(lo - first, hi - first + 1, stride)
         err = [np.abs(self._columns["err_red"][i]) for i in indices]
-        pick = lambda name: [  # noqa: E731
+        pick = lambda name: [
             _json_number(self._columns[name][i]) for i in indices
         ]
         return {
@@ -272,6 +297,11 @@ class DebugTap:
                 for tick, forced, frames in self.replans
                 if lo <= tick <= hi
             ],
+            "keyframe_events": [
+                [tick, ordinal, leg, err_mean, err_max]
+                for tick, ordinal, leg, err_mean, err_max in self.keyframe_events
+                if lo <= tick <= hi
+            ],
         }
 
     def to_npz_bytes(self) -> bytes:
@@ -285,6 +315,9 @@ class DebugTap:
         arrays["replans"] = np.asarray(
             [[t, int(f), n] for t, f, n in self.replans], dtype="i8"
         ).reshape(-1, 3)
+        arrays["keyframe_events"] = np.asarray(
+            [[t, o, leg, em, ex] for t, o, leg, em, ex in self.keyframe_events], dtype="f8"
+        ).reshape(-1, 5)
         arrays["window_start"] = np.asarray(first, dtype="i8")
 
         buffer = io.BytesIO()

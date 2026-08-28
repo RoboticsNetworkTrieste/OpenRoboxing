@@ -1,6 +1,6 @@
 """The sparring bench: one player fighter, a passive sacco, and every debug tap the match hides.
 
-Implements `spec/sparring_protocol.md` 0.1 over the same aiohttp + websocket shape as
+Implements `spec/sparring_protocol.md` 0.3 over the same aiohttp + websocket shape as
 `server/app.py`. The core is imported and never edited: `SparringWorld` subclasses
 :class:`~openroboxing.runtime.fight.FightWorld`, the pilot is the match's own ``QueuedPilot``, and
 the binary frames come from the same :class:`~openroboxing.server.scene.Scene`.
@@ -14,6 +14,28 @@ What is deliberately different from the match host
 - **Everything is recorded** into a :class:`~openroboxing.server.sparring_tap.DebugTap`, and any
   recorded tick can be re-packed into a binary frame for scrubbing.
 
+Ported for `spec/intent.md` 3.0 (B3)
+-------------------------------------
+0.1-0.2 built most of their instrumentation around the approach: a queue entry's `arrived` and
+`completed_by`, the `arrival_radius_m` / `approach_leg_m` / `approach_timeout_ticks` knobs, the
+`has_arrived` bench override on `SparringWorld`, and a machine state split into `APPROACH` and
+`DWELL`. 3.0 deleted the approach outright (`spec/intent.md` "Removed at 3.0"), and every one of
+those existed only to serve it — deleted here too, not merely stopped being read. What replaced them:
+
+- a commit's queue entry now carries ``leg_index`` / ``leg_count`` — which recorded keyframe is
+  live, the direct read of "where in the combination" now that a leg boundary is exact arithmetic
+  rather than a settle event to detect — and ``drift_speed_m_s``, how hard an off-target commit had
+  to run to still land on its ghost (`runtime/fight.py::FightWorld._record_drift`);
+- the tap's ``keyframe_events`` log tracking error at each leg boundary — `spec/sparring_protocol.md`
+  §"Per-keyframe tracking error", the concrete answer to "did the body settle into the pose" now that
+  nothing watches for settling;
+- the ``drift_gain`` knob, a process-local override of `runtime.warp.DRIFT_GAIN` in the same spirit
+  as 0.2's dwell override, replacing the arrival/approach knobs that governed a mechanism which no
+  longer exists;
+- ``drafts_allowed`` on `welcome`, because every combination on disk today is unmeasured
+  (`admission="draft"`) and a bench session must say so on screen (`spec/intent.md`: "The Studio
+  passes `require_admitted=False`... a match never does").
+
 Conventions
 -----------
 - Ticks are 50 Hz, absolute since the last reset. The red seat is the player; blue is the sacco.
@@ -24,19 +46,19 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from dataclasses import dataclass
 import math
-from pathlib import Path
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from openroboxing.paths import OPENROBOXING_ROOT
+from openroboxing.runtime import warp as warp_module
 from openroboxing.runtime.conventions import G1
 from openroboxing.runtime.fight import FightError, FightWorld
-import openroboxing.runtime.intents as intents_module
-from openroboxing.runtime.intents import DEFAULT_APPROACH_TIMEOUT_TICKS
 from openroboxing.runtime.match import MatchFormat
 from openroboxing.runtime.reference import (
     GENERATOR_MARGIN_FRAMES,
@@ -44,7 +66,7 @@ from openroboxing.runtime.reference import (
     REPLAN_DT,
 )
 from openroboxing.server import protocol
-from openroboxing.server.host import LATE_TICK_S, QueuedPilot
+from openroboxing.server.host import LATE_TICK_S
 from openroboxing.server.scene import Scene
 from openroboxing.server.sparring_tap import (
     MACHINE_STATES,
@@ -55,11 +77,9 @@ from openroboxing.server.sparring_tap import (
     viz_world_path,
 )
 from openroboxing.spec.constants import (
-    APPROACH_LEG_M,
-    ARRIVAL_RADIUS_M,
     COMMIT_HORIZON_TICKS,
+    DRIFT_GAIN,
     GENERATOR_HZ,
-    POSE_DWELL_TICKS,
     TICK_DT,
     TICK_HZ,
 )
@@ -87,9 +107,7 @@ TRAIL_STRIDE = 5
 #: `ReferenceStream.ensure` fills, so live and scrub draw the same horizon — a scrub that reads to
 #: the end of the recording draws the rest of the session instead of the plan (0.1's "strange
 #: trail", 2026-08-17).
-PLAN_HORIZON_TICKS = LOOKAHEAD_TICKS + int(
-    math.ceil(GENERATOR_MARGIN_FRAMES * TICK_HZ / GENERATOR_HZ)
-)
+PLAN_HORIZON_TICKS = LOOKAHEAD_TICKS + math.ceil(GENERATOR_MARGIN_FRAMES * TICK_HZ / GENERATOR_HZ)
 
 
 def strict_dumps(payload: Any) -> str:
@@ -119,20 +137,41 @@ async def send_json(socket: Any, payload: Any) -> None:
 
 def _rounded(value: Any, digits: int = 3) -> float | None:
     """A recorded scalar for the wire: ``None`` where the recording has no value."""
+    if value is None:
+        return None
     number = float(value)
     return None if not math.isfinite(number) else round(number, digits)
 
 
-def bench_queue_entry(commit: Any, tick: int) -> dict:
-    """The match's queue entry plus what only a bench needs to see.
+def _leg_progress(commit: Any, tick: int) -> tuple[int | None, int | None]:
+    """Which recorded leg is live at ``tick``, and how many the commit has. ``(None, None)`` before
+    the commit has a runner, or for a tick earlier than it started.
 
-    ``arrived`` is the difference between a move that *landed* and one whose approach ran out of
-    time and threw the pose where it stood — the same row in a match client, two very different
-    events on a bench. The match protocol is untouched; this is the bench's own addition.
+    `spec/intent.md` 3.0's replacement for 0.1-0.2's `arrived` / `completed_by`: a leg boundary is
+    exact arithmetic (`runtime/sequence.py::CombinationRunner.leg_index`), not a settle event, so
+    "where in the combination" is a number rather than a phase flag.
+    """
+    runner = commit.runner
+    if runner is None or commit.commit_at is None or tick < commit.commit_at:
+        return None, None
+    return runner.leg_index(tick), len(runner.legs)
+
+
+def bench_queue_entry(commit: Any, tick: int, world: Any) -> dict:
+    """The match's queue entry (`server/protocol.py::queue_entry`) plus what only a bench needs.
+
+    ``drift_speed_m_s`` reaches into `FightWorld`'s own private drift table
+    (:attr:`~openroboxing.runtime.fight.FightWorld._drift_speed_m_s`) rather than recomputing the
+    formula a third time — `runtime/fight.py::FightWorld._record_drift`'s docstring already explains
+    why the match record itself does the same. It is ``None`` until the commit has started, exactly
+    when the table is populated.
     """
     entry = protocol.queue_entry(commit, tick)
-    entry["arrived"] = commit.arrived
-    entry["completed_by"] = commit.completed_by
+    leg_index, leg_count = _leg_progress(commit, tick)
+    entry["leg_index"] = leg_index
+    entry["leg_count"] = leg_count
+    drift = world._drift_speed_m_s.get(id(commit)) if commit.commit_at is not None else None
+    entry["drift_speed_m_s"] = _rounded(drift)
     return entry
 
 
@@ -153,9 +192,12 @@ class Knob:
     integer: bool = False
 
 
-def _set_dwell(world: Any, value: float) -> None:
-    """The documented process-local override of the dwell (`spec/sparring_protocol.md` §Knobs)."""
-    intents_module.POSE_DWELL_TICKS = int(value)
+def _set_drift_gain(world: Any, value: float) -> None:
+    """The documented process-local override of the drift gain (`spec/sparring_protocol.md`
+    §Knobs). ``warp()`` reads the module global at the tick each commit *starts*, so this only ever
+    changes what the next commit to begin computes its residual with — a running commit's legs were
+    already fixed the moment it started and do not move underfoot."""
+    warp_module.DRIFT_GAIN = float(value)
 
 
 KNOBS: dict[str, Knob] = {
@@ -177,32 +219,10 @@ KNOBS: dict[str, Knob] = {
         set=lambda w, v: setattr(w.fighters["red"].timeline, "max_outstanding", int(v)),
         integer=True,
     ),
-    "arrival_radius_m": Knob(
-        canonical=ARRIVAL_RADIUS_M,
-        get=lambda w: float(w.arrival_radius_m),
-        set=lambda w, v: setattr(w, "arrival_radius_m", float(v)),
-    ),
-    "approach_leg_m": Knob(
-        canonical=APPROACH_LEG_M,
-        get=lambda w: float(w.approach_leg_m),
-        set=lambda w, v: setattr(w, "approach_leg_m", float(v)),
-        # Zero is legal and is the A/B: aim the generator at the whole placement, the way the
-        # runtime did before the leg existed.
-        minimum=-1.0,
-    ),
-    "approach_timeout_ticks": Knob(
-        canonical=float(DEFAULT_APPROACH_TIMEOUT_TICKS),
-        get=lambda w: float(w.fighters["red"].timeline.approach_timeout_ticks),
-        set=lambda w, v: setattr(
-            w.fighters["red"].timeline, "approach_timeout_ticks", int(v)
-        ),
-        integer=True,
-    ),
-    "pose_dwell_ticks": Knob(
-        canonical=float(POSE_DWELL_TICKS),
-        get=lambda w: float(intents_module.POSE_DWELL_TICKS),
-        set=_set_dwell,
-        integer=True,
+    "drift_gain": Knob(
+        canonical=DRIFT_GAIN,
+        get=lambda w: float(warp_module.DRIFT_GAIN),
+        set=_set_drift_gain,
     ),
 }
 
@@ -245,29 +265,18 @@ def set_knobs(world: Any, updates: dict[str, Any]) -> dict[str, dict[str, float]
 
 # -- the world --------------------------------------------------------------------------------------
 class SparringWorld(FightWorld):
-    """A :class:`FightWorld` with a bench's affordances: a movable arrival radius and a teleport.
+    """A :class:`FightWorld` with a bench's affordances: a teleport, and nothing else.
 
     Everything else — both fighters, the shared policy, the per-fighter generators — is exactly the
     match's world, which is the point: the behaviours debugged here are the behaviours a match runs.
+
+    Unlike 0.1-0.2 this class adds no *geometric* knob of its own any more: `arrival_radius_m` and
+    `approach_leg_m` governed an approach that `spec/intent.md` 3.0 deleted
+    (`runtime/fight.py`'s module docstring), and the bench's own `has_arrived` override went with
+    the test it stood in for. `teleport_sacco` survives because it is a real bench-only affordance a
+    match must never have — moving a fighter by decree — not because it needed the same override
+    machinery.
     """
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        #: The arrival test's radius. The knob writes this; the canonical value is the measured
-        #: `ARRIVAL_RADIUS_M` the core uses.
-        self.arrival_radius_m = float(ARRIVAL_RADIUS_M)
-
-    def has_arrived(self, fighter: str, commit) -> bool:
-        """The core's arrival test, reading the bench's radius instead of the constant."""
-        me = self.fighters[fighter]
-        if commit.placement is None:
-            raise FightError(
-                f"{fighter}: asked whether a commit with no placement has arrived; a commit "
-                "without one has nowhere to walk to and never approaches"
-            )
-        here = self.data.xpos[me.pelvis_body][:2]
-        target = np.asarray(commit.placement.position, dtype=np.float64)
-        return bool(np.linalg.norm(target - here) <= self.arrival_radius_m)
 
     def teleport_sacco(self, x: float, y: float, heading: float) -> None:
         """Drop the sacco at a chosen spot, standing, at rest. A bench action; matches never move
@@ -330,6 +339,9 @@ class SparringHost:
         #: broken bench, which is exactly how the controller-gate bug hid.
         self._pilot_error: dict[str, Any] | None = None
         self._pilot_error_seen: str | None = None
+        #: ``id(commit) -> the leg index it was on last tick``, for :meth:`_observe_leg`. Cleared on
+        #: reset so a commit object from a previous session can never collide by id().
+        self._last_leg_index: dict[int, int] = {}
         self._watch_replans()
 
     # -- wiring ------------------------------------------------------------------------------------
@@ -369,23 +381,73 @@ class SparringHost:
     def _red(self):
         return self.world.fighters["red"]
 
+    # -- geometry ------------------------------------------------------------------------------------
+    # Ported from `server/host.py::MatchHost`, which reads the same public indices for the same
+    # reason: `runtime/fight.py`'s M6-T7 rewrite dropped `FightWorld`'s public `root_pose()` and
+    # `anchor()` (the approach that read them is gone), leaving only the private, once-per-commit
+    # anchor the timeline calls internally. The bench needs a fighter's position on every tick, same
+    # as the match host does, so it reads `pelvis_body` off the shared `MjData` directly rather than
+    # asking `runtime/` (out of scope this phase) for a second public accessor.
+    def _fighter_position(self, seat: str) -> tuple[float, float]:
+        """Where ``seat`` actually stands right now, world ``(x, y)``."""
+        fighter = self.world.fighters[seat]
+        pelvis = self.world.data.xpos[fighter.pelvis_body]
+        return (float(pelvis[0]), float(pelvis[1]))
+
+    def _anchor_position(self, seat: str) -> tuple[float, float]:
+        """Where a commit issued *right now* would start from — the last queued commit's ghost, or
+        the fighter's live position when the queue is empty. Mirrors
+        `server/host.py::MatchHost._anchor_position` exactly: the bench enforces the same feasibility
+        check a match does (`spec/intent.md` "Feasibility"), so it must project the same anchor."""
+        timeline = self.world.fighters[seat].timeline
+        scheduled = timeline.scheduled(self.tick)
+        if scheduled:
+            return scheduled[-1].ghost
+        return self._fighter_position(seat)
+
     # -- the loop ----------------------------------------------------------------------------------
+    def _observe_leg(self, commit: Any, ordinal: int, tick: int, error: np.ndarray) -> None:
+        """Log a keyframe event the tick a commit's live leg advances.
+
+        `spec/sparring_protocol.md` §"Per-keyframe tracking error": 3.0's replacement for the
+        counted dwell's settle test — a leg's end is exact arithmetic, so what is still worth
+        recording about it is the tracking error at the tick it ended, not a watched-for
+        convergence. The first tick a commit becomes current is leg 0's *start*, not a leg's end, so
+        it is recorded as the baseline and produces no event of its own.
+        """
+        if commit.runner is None:
+            return
+        leg_index = commit.runner.leg_index(tick)
+        key = id(commit)
+        previous = self._last_leg_index.get(key)
+        if previous is None:
+            self._last_leg_index[key] = leg_index
+            return
+        if leg_index != previous:
+            err = np.abs(error)
+            self.tap.keyframe_events.append(
+                (tick, ordinal, previous, float(err.mean()), float(err.max()))
+            )
+            self._last_leg_index[key] = leg_index
+
     def step_once(self) -> None:
-        """One 50 Hz tick: pilot anchor, world step, tap row. A no-op while paused."""
+        """One 50 Hz tick: world step, tap row. A no-op while paused.
+
+        Unlike 0.1-0.2 there is no anchor to forward to the pilot: the new `QueuedPilot`
+        (`server/host.py`, rewritten for combinations) carries no `.anchor` attribute at all — a
+        commit's ghost is always the absolute world position the client already sent with the
+        `intent` message, and the *timeline's* own anchor (where a starting commit actually begins)
+        is sampled internally by `FightWorld.step` itself, once per commit, exactly as a match does.
+        """
         if self.paused:
             return
         start = time.perf_counter()
         self._filling_tick = self.tick
 
         red = self._red
-        pilot = red.pilot
-        if isinstance(pilot, QueuedPilot):
-            pilot.anchor = self.world.anchor("red", self.tick)
-
         self.world.step(self.tick)
 
-        # Surface what the pilot refused this tick. `last_error` is a latch, not a stream, so a
-        # repeat of the same sentence is one event until it changes.
+        pilot = red.pilot
         refused = getattr(pilot, "last_error", None)
         if refused and refused != self._pilot_error_seen:
             self._pilot_error_seen = refused
@@ -402,11 +464,11 @@ class SparringHost:
         for index, commit in enumerate(commits):
             if commit.is_executing(self.tick):
                 ordinal = index
-                if commit.placement is not None:
-                    target = np.asarray(commit.placement.position)
-                    here = np.asarray(self.world.root_pose("red").position)
-                    distance = float(np.linalg.norm(target - here))
-                    plan_distance = self._plan_distance(target, here)
+                target = np.asarray(commit.ghost, dtype=np.float64)
+                here = np.asarray(self._fighter_position("red"), dtype=np.float64)
+                distance = float(np.linalg.norm(target - here))
+                plan_distance = self._plan_distance(target, here)
+                self._observe_leg(commit, index, self.tick, error)
                 break
 
         blue = self.world.fighters["blue"]
@@ -446,6 +508,7 @@ class SparringHost:
         self.paused = False
         self._pilot_error = None
         self._pilot_error_seen = None
+        self._last_leg_index.clear()
         pilot = self._red.pilot
         if hasattr(pilot, "reset"):
             pilot.reset()
@@ -458,13 +521,19 @@ class SparringHost:
 
     def welcome_message(self) -> dict:
         """The red seat's welcome, so the sparring client reuses the match client's staging."""
-        return protocol.welcome(
+        message = protocol.welcome(
             seat="red",
-            loadout=self._red.loadout,
+            library=self._red.library,
             match_format=MatchFormat(),
             arena=self.world.config.__dict__.copy(),
             match_id="sparring",
         )
+        # `spec/intent.md` "Admission is enforced at construction": "The Studio passes
+        # require_admitted=False... a match never does." A bench is exactly that Studio-side caller,
+        # and every combination on disk today is `admission="draft"` — this must be visible, not
+        # silent (`spec/sparring_protocol.md` §Host -> client).
+        message["drafts_allowed"] = not self._red.require_admitted
+        return message
 
     def state_message(self) -> dict:
         """The red seat's own view. There is no opponent to hide anything from."""
@@ -475,14 +544,14 @@ class SparringHost:
         seat = protocol.seat_state(
             handle="red",
             staged=getattr(pilot, "staged", None),
-            placement=timeline.staged.placement,
-            anchor=self.world.anchor("red", self.tick),
-            position=self.world.root_pose("red"),
             queue=[protocol.queue_entry(c, self.tick) for c in scheduled],
             can_commit=len(scheduled) < timeline.max_outstanding,
             hits_landed=0,
             torso_height_m=float(self.world.data.qpos[red.root_qpos[2]]),
             down=False,
+            ghost=timeline.staged.ghost,
+            anchor=self._anchor_position("red"),
+            position=self._fighter_position("red"),
         )
         return {
             "type": "state",
@@ -496,10 +565,8 @@ class SparringHost:
         """How far the frame the encoder is chasing is from ``target``. NaN when there is no plan.
 
         The counterpart of the body's own distance. MotionBricks is kinematic and its plan arrives
-        every time; the body tracking it is what actually has to get there, and an approach that
-        stalls shows up here as *plan in, body out* — measured 2026-08-17 over seven bearings: the
-        plan closed to 0.02-0.19 m in all of them, the body to 0.007 m straight ahead and only
-        0.38-0.54 m off-axis, so four of seven approaches ended on the timeout instead of arriving.
+        every time; the body tracking it is what actually has to get there — see
+        `spec/sparring_protocol.md` §"Two distances, not one" for what this pair diagnoses at 3.0.
         """
         red = self._red
         motion = np.asarray(red.stream.motion)
@@ -518,7 +585,7 @@ class SparringHost:
         if len(motion) <= tick:
             return None, []
         red = self._red
-        robot_xy = self.world.root_pose("red").position
+        robot_xy = self._fighter_position("red")
         apply_yaw = float(red.apply_yaw)
         plan = motion[: tick + PLAN_HORIZON_TICKS + 1]
         ghost = viz_ghost(plan, tick, LOOKAHEAD_TICKS, robot_xy, apply_yaw, G1.mujoco_joint_names)
@@ -553,7 +620,7 @@ class SparringHost:
         """The 10 Hz panel feed — `spec/sparring_protocol.md` §Host → client."""
         red = self._red
         tick = max(0, self.tick - 1) if self.tick else 0
-        ghost, trail = self._ghost_and_trail(tick, np.asarray(red.stream.motion))
+        plan_ghost, trail = self._ghost_and_trail(tick, np.asarray(red.stream.motion))
 
         if len(self.tap):
             first, last = self.tap.window()
@@ -574,14 +641,16 @@ class SparringHost:
             "machine": machine,
             "commit_ordinal": ordinal,
             "queue": [
-                bench_queue_entry(c, tick) for c in red.timeline.scheduled(tick)
+                bench_queue_entry(c, tick, self.world) for c in red.timeline.scheduled(tick)
             ],
-            "ghost": ghost,
+            "plan_ghost": plan_ghost,
             "trail": trail,
             "series_head": head,
             "replans": [list(r) for r in self.tap.replans[-20:]],
+            "keyframe_events": [list(k) for k in self.tap.keyframe_events[-20:]],
             "knobs": knob_values(self.world),
             "recording": recording,
+            "drafts_allowed": not red.require_admitted,
             "pilot_error": self._pilot_error,
         }
 
@@ -615,9 +684,9 @@ class SparringHost:
             # so asking a past tick replays the record. Without it the panel emptied out the moment
             # you scrubbed, which reads as "nothing was queued" rather than "not shown".
             "queue": [
-                bench_queue_entry(c, tick) for c in self._red.timeline.scheduled(tick)
+                bench_queue_entry(c, tick, self.world) for c in self._red.timeline.scheduled(tick)
             ],
-            "ghost": ghost,
+            "plan_ghost": ghost,
             "trail": [[round(float(x), 3), round(float(y), 3)] for x, y in path],
             "series_head": self._series_head(row),
             "recording": {"start_tick": first, "end_tick": last},
@@ -634,7 +703,15 @@ class SparringHost:
 
     # -- client messages ---------------------------------------------------------------------------
     def handle(self, message: dict) -> dict | None:
-        """Apply one client message: sparring controls first, then the match staging subset."""
+        """Apply one client message: sparring controls first, then the match staging subset.
+
+        The two checks against ``intent``/``commit`` mirror `server/host.py::MatchHost.handle`
+        exactly: an unknown combination and a ghost beyond a combination's own reach are answered
+        synchronously here rather than left to surface a tick later through `pilot.last_error`, the
+        same reason the match host answers them before a commit is ever paid for
+        (`spec/intent.md` "Feasibility"). A bench that refused something different from what a match
+        refuses would be testing the wrong thing.
+        """
         kind = message.get("type")
         if kind == "pause":
             self.paused = True
@@ -682,15 +759,26 @@ class SparringHost:
             return None
 
         red = self._red
-        if parsed["type"] == "stage" and parsed["slot"] not in red.loadout.slots:
-            return protocol.error(f"slot {parsed['slot']!r} is not in this loadout", rejected="stage")
+        timeline = red.timeline
+        if parsed["type"] == "intent":
+            try:
+                protocol.check_combination(parsed["combination"], timeline.library)
+            except protocol.ProtocolError as exc:
+                return protocol.error(str(exc), rejected="intent")
         if parsed["type"] == "commit":
-            timeline = red.timeline
             if len(timeline.scheduled(self.tick)) >= timeline.max_outstanding:
                 return protocol.error(
                     f"{timeline.max_outstanding} moves are already queued; no cancellation",
                     rejected="commit",
                 )
+            staged = timeline.staged
+            if staged.is_committable():
+                record = timeline.library[staged.combination]
+                try:
+                    protocol.check_reach(record, self._anchor_position("red"), staged.ghost)
+                except protocol.ProtocolError as exc:
+                    return protocol.error(str(exc), rejected="commit")
+
         red.pilot.queue(parsed)
         return None
 
@@ -705,7 +793,7 @@ class SparringHost:
         for socket in list(self._subscribers):
             try:
                 await send_json(socket, message)
-            except Exception:
+            except Exception:  # noqa: BLE001 - a dead socket must never stall a tick
                 self._subscribers.discard(socket)
 
     async def _broadcast_frame(self) -> None:
@@ -715,7 +803,7 @@ class SparringHost:
         for socket in list(self._subscribers):
             try:
                 await socket.send_bytes(frame)
-            except Exception:
+            except Exception:  # noqa: BLE001 - a dead socket must never stall a tick
                 self._subscribers.discard(socket)
 
     async def run(self) -> None:

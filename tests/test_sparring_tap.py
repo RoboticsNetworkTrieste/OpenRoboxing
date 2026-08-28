@@ -1,5 +1,9 @@
 """The sparring bench's DebugTap: state derivation, the viz transform, the recorder.
 
+Ported for `spec/intent.md` 3.0 (B3): a commit is a combination, not a placement and a pose, so the
+machine state loses the approach/dwell split (`APPROACH`/`DWELL` collapse into `RUNNING`) and the
+fixtures below build `Commit`s from `CombinationRecord`s rather than `PoseRecord` + `Placement`.
+
 Reproduce:
     .venv_mb/bin/python -m pytest tests/test_sparring_tap.py -v
 """
@@ -14,13 +18,12 @@ import numpy as np
 import pytest
 
 from openroboxing.runtime.conventions import G1
-from openroboxing.runtime.intents import Commit, Placement
+from openroboxing.runtime.intents import Commit
 from openroboxing.server.sparring_tap import (
-    APPROACH,
-    DWELL,
     HOLD,
     MACHINE_STATES,
     OPENING,
+    RUNNING,
     WAITING,
     DebugTap,
     TapError,
@@ -29,39 +32,37 @@ from openroboxing.server.sparring_tap import (
     viz_world_path,
     yaw_of_quat_wxyz,
 )
-from openroboxing.spec.constants import POSE_DWELL_TICKS, QPOS_DIM
-from openroboxing.studio.pose_record import PoseRecord
+from openroboxing.spec.constants import QPOS_DIM
+from openroboxing.studio.combination_record import CombinationRecord, CombinationSource, Keyframe
+
+ANGLES = {name: 0.0 for name in G1.mujoco_joint_names}
 
 
-def _pose(name: str = "jab-left") -> PoseRecord:
-    from openroboxing.runtime.obs import default_angles
+def _combination(name: str = "jab-cross", *, tokens=(6, 6)) -> CombinationRecord:
+    """A small, admitted combination — cheap enough to build `Commit`s from directly.
 
-    return PoseRecord(
+    Mirrors the builder in `test_intents_combinations.py`, `test_fight.py`, `test_warp.py`: each
+    test file in this repo keeps its own copy rather than sharing a fixtures module.
+    """
+    keyframes = [Keyframe(dict(ANGLES), None, (0.0, 0.0), 0.0)]
+    for i, token in enumerate(tokens, start=1):
+        keyframes.append(Keyframe(dict(ANGLES), token, (0.1 * i, 0.0), 0.0))
+    return CombinationRecord(
         name=name,
-        joint_angles=dict(zip(G1.mujoco_joint_names, default_angles(G1, "mujoco"))),
-        horizon_tokens=8,
-        library_version="v0.1",
-        admission="admitted",
+        library_version="v0.2",
+        source=CombinationSource("t", 0, 100, False),
+        keyframes=keyframes,
         telegraph_ms=180.0,
-        generator_error_rad=0.1,
+        tracking_error_rad=0.1,
+        admission="admitted",
     )
 
 
-def _commit(
-    issued_at: int, *, commit_at=None, strike_at=None, arrived=None, ended_at=None
-) -> Commit:
-    commit = Commit(
-        pose=_pose(),
-        context="walk_boxing",
-        placement=Placement(position=(1.0, 0.0), heading=0.0),
-        issued_at=issued_at,
-        slot="1",
-    )
+def _commit(issued_at: int, *, commit_at=None, ended_at=None) -> Commit:
+    """A `Commit` with its span set directly — `spec/intent.md` 3.0's fields are plain, settable
+    once a commit has started (`commit_at`, `ended_at`), unlike 2.2's watched-for `strike_at`."""
+    commit = Commit(record=_combination(), ghost=(1.0, 0.0), issued_at=issued_at)
     commit.commit_at = commit_at
-    commit.strike_at = strike_at
-    commit.arrived = arrived
-    # Since `spec/intent.md` 2.2 a span is stamped as the move runs, so a fixture that wants a
-    # *finished* commit has to say when it finished; there is no rule that derives it.
     commit.ended_at = ended_at
     return commit
 
@@ -74,37 +75,40 @@ class TestMachineState:
         # Inside its horizon window: issued, not yet executing.
         assert derive_machine_state([_commit(10)], tick=15) == WAITING
 
-    def test_executing_without_arrival_is_the_approach(self) -> None:
-        commit = _commit(10, commit_at=40)
-        assert derive_machine_state([commit], tick=60) == APPROACH
-
-    def test_arrived_and_holding_the_strike_is_the_dwell(self) -> None:
-        commit = _commit(10, commit_at=40, strike_at=100, arrived=True)
-        assert derive_machine_state([commit], tick=110) == DWELL
+    def test_executing_is_running(self) -> None:
+        """3.0 has one running state, not two: a combination is one continuous piece of recorded
+        motion, so there is no approach-then-dwell split left for `RUNNING` to distinguish."""
+        commit = _commit(10, commit_at=40, ended_at=140)
+        assert derive_machine_state([commit], tick=60) == RUNNING
 
     def test_a_finished_commit_with_nothing_behind_is_held(self) -> None:
-        ended = 100 + POSE_DWELL_TICKS
-        commit = _commit(10, commit_at=40, strike_at=100, arrived=True, ended_at=ended)
-        assert commit.end_tick == ended
-        assert derive_machine_state([commit], tick=ended) == HOLD
+        commit = _commit(10, commit_at=40, ended_at=140)
+        assert derive_machine_state([commit], tick=140) == HOLD
 
-    def test_a_commit_that_has_struck_but_not_ended_is_still_the_dwell(self) -> None:
-        """`end_tick` is None until the move is over, and None means *later than any tick*."""
-        commit = _commit(10, commit_at=40, strike_at=100, arrived=True)
-        assert commit.end_tick is None
-        assert derive_machine_state([commit], tick=100 + 10 * POSE_DWELL_TICKS) == DWELL
+    def test_a_commit_not_yet_finished_is_still_running_right_up_to_its_end(self) -> None:
+        """`end_tick` is exact arithmetic at 3.0 — no `None`-means-still-running rule survives it."""
+        commit = _commit(10, commit_at=40, ended_at=140)
+        assert commit.end_tick == 140
+        assert derive_machine_state([commit], tick=139) == RUNNING
 
     def test_a_queued_commit_behind_a_finished_one_is_waiting(self) -> None:
-        done = _commit(10, commit_at=40, strike_at=100, arrived=True, ended_at=174)
-        queued = _commit(150)
-        assert derive_machine_state([done, queued], tick=done.end_tick + 1) == WAITING
+        done = _commit(10, commit_at=40, ended_at=140)
+        queued = _commit(120)  # issued while `done` was still running; not started itself
+        assert derive_machine_state([done, queued], tick=141) == WAITING
+
+    def test_a_scrub_before_any_commit_started_is_opening_even_with_a_non_empty_log(self) -> None:
+        """A commit issued *later* in the session must not make a scrub to an earlier tick read
+        `HOLD` just because the commit log, as a whole, is non-empty — `Commit.end_tick` is `None`
+        until a commit starts, and scrubbing to a tick before that must still say `OPENING`."""
+        later = _commit(500, commit_at=520, ended_at=600)
+        assert derive_machine_state([later], tick=0) == OPENING
 
     def test_the_names_match_the_indices(self) -> None:
         assert MACHINE_STATES[OPENING] == "OPENING"
         assert MACHINE_STATES[WAITING] == "WAITING"
-        assert MACHINE_STATES[APPROACH] == "APPROACH"
-        assert MACHINE_STATES[DWELL] == "DWELL"
+        assert MACHINE_STATES[RUNNING] == "RUNNING"
         assert MACHINE_STATES[HOLD] == "HOLD"
+        assert len(MACHINE_STATES) == 4, "APPROACH/DWELL collapsed into RUNNING at 3.0"
 
 
 # -- the visualisation transform --------------------------------------------------------------------
@@ -231,24 +235,27 @@ class TestDebugTap:
             tap.append(tick, **_row(tick))
         tap.replans.append((30, False, 44))
         tap.replans.append((90, True, 40))
+        tap.keyframe_events.append((25, 0, 1, 0.03, 0.09))
+        tap.keyframe_events.append((95, 0, 2, 0.02, 0.05))
 
         series = tap.series(0, 99, stride=10)
         assert series["tick"] == list(range(0, 100, 10))
         assert len(series["err_mean"]) == 10
         assert series["err_mean"][5] == pytest.approx(0.5, rel=1e-5)  # |0.01 * 50|
         assert series["replans"] == [[30, False, 44], [90, True, 40]]
+        assert series["keyframe_events"] == [[25, 0, 1, 0.03, 0.09], [95, 0, 2, 0.02, 0.05]]
 
     def test_series_carries_no_bare_nan(self) -> None:
         """A gap is ``null``, never ``NaN``.
 
         Python's ``json`` emits bare ``NaN`` happily and JavaScript's ``JSON.parse`` refuses it, so
-        one un-approached tick used to poison the whole payload: the client's fetch threw, the
+        one un-executing tick used to poison the whole payload: the client's fetch threw, the
         charts never received a point, and the bench looked like it recorded nothing (2026-08-17 —
         970 of 1052 samples were NaN and the whole strip stayed blank).
         """
         tap = DebugTap()
         for tick in range(10):
-            row = _row(tick)  # dist_target is NaN in every row: no placement is being approached
+            row = _row(tick)  # dist_target is NaN in every row: no commit is executing
             if tick == 3:
                 row["step_ms"] = float("inf")
             tap.append(tick, **row)
@@ -264,17 +271,30 @@ class TestDebugTap:
             tap.append(tick, **_row(tick))
         tap.replans.append((10, False, 44))  # before the window
         tap.replans.append((80, False, 44))
+        tap.keyframe_events.append((10, 0, 0, 0.01, 0.02))  # before the window
+        tap.keyframe_events.append((80, 0, 1, 0.03, 0.04))
         assert tap.series(50, 99)["replans"] == [[80, False, 44]]
+        assert tap.series(50, 99)["keyframe_events"] == [[80, 0, 1, 0.03, 0.04]]
 
     def test_npz_round_trips(self) -> None:
         tap = DebugTap()
         for tick in range(20):
             tap.append(tick, **_row(tick))
         tap.replans.append((5, True, 40))
+        tap.keyframe_events.append((7, 0, 1, 0.04, 0.11))
 
         archive = np.load(io.BytesIO(tap.to_npz_bytes()))
         assert archive["tick"].shape == (20,)
         assert archive["qpos"].shape == (20, 79)
         assert archive["err_red"].shape == (20, 29)
         assert archive["replans"].tolist() == [[5, 1, 40]]
+        assert archive["keyframe_events"].tolist() == [[7.0, 0.0, 1.0, 0.04, 0.11]]
         assert int(archive["window_start"]) == 0
+
+    def test_clear_forgets_keyframe_events_too(self) -> None:
+        tap = DebugTap()
+        tap.append(0, **_row(0))
+        tap.keyframe_events.append((0, 0, 0, 0.0, 0.0))
+        tap.clear()
+        assert tap.keyframe_events == []
+        assert len(tap) == 0

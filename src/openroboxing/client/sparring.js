@@ -1,4 +1,4 @@
-/* The sparring bench client — spec/sparring_protocol.md 0.1.
+/* The sparring bench client — spec/sparring_protocol.md 0.3.
  *
  * Three bodies in the ring and a strip of instruments under it:
  *   - the robot (and the sacco): streamed binary frames, exactly as a match;
@@ -8,6 +8,16 @@
  *
  * Two view modes. LIVE follows the stream; SCRUB replays any recorded tick through
  * `GET /api/frame/{tick}` — same binary format, same draw path, so a scrubbed frame cannot lie.
+ *
+ * Ported for spec/intent.md 3.0 (B3)
+ * -----------------------------------
+ * The player used to pick one of a loadout's six poses (`1`-`6`), place it with a heading, and the
+ * fighter walked there. A commit is now a **combination** — 3-6 recorded keyframes with recorded
+ * timing — selected from the whole shared ~120-move library (`D6`, `client/app.js`'s picker), and
+ * the ghost is **position only**: heading is derived from the fighter's own heading plus the
+ * combination's recorded turn (`D5`), never chosen. `stage`/`place` collapsed into one `intent`
+ * message (`spec/protocol.md` 0.6), and this file follows that collapse rather than keeping its own
+ * copy of the old pair.
  */
 
 'use strict';
@@ -23,14 +33,12 @@ const SERIES_MAX_POINTS = 1200;
 const SCRUB_DEBOUNCE_MS = 30;
 
 const DRIVE = { w: [0, 1], s: [0, -1], a: [-1, 0], d: [1, 0] };
-const KNOB_ORDER = [
-  'replan_dt', 'horizon_ticks', 'max_outstanding',
-  'arrival_radius_m', 'approach_leg_m', 'approach_timeout_ticks', 'pose_dwell_ticks',
-];
-const KNOB_STEP = {
-  replan_dt: 0.05, horizon_ticks: 5, max_outstanding: 1,
-  arrival_radius_m: 0.05, approach_leg_m: 0.25, approach_timeout_ticks: 25, pose_dwell_ticks: 5,
-};
+/* Nine at a time, paged (`D6`) — the same grid `client/app.js`'s picker uses. */
+const GRID_SIZE = 9;
+const GRID_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
+
+const KNOB_ORDER = ['replan_dt', 'horizon_ticks', 'max_outstanding', 'drift_gain'];
+const KNOB_STEP = { replan_dt: 0.05, horizon_ticks: 5, max_outstanding: 1, drift_gain: 0.01 };
 
 const canvas = document.getElementById('ring');
 const canvasBox = canvas.parentElement;
@@ -42,9 +50,10 @@ const S = {
   socket: null,
   mode: 'live',              // 'live' | 'scrub'
   paused: false,
-  loadout: {}, poses: {}, poseSeconds: {}, slots: [],
+  combinations: [], combinationsByName: {}, page: 0,
   staged: null, offset: { x: 0, y: 0 },
   anchor: null, canCommit: true, position: null,
+  draftsAllowed: null,       // this session's `require_admitted`, inverted — set from `welcome`
   debug: null,               // last debug message (live)
   knobsBuilt: false,
   heatmap: false, showPlan: true, showTrail: true,
@@ -114,26 +123,79 @@ function showError(text) {
   S.errorTimer = setTimeout(() => { element.hidden = true; }, 5000);
 }
 
-/* ---- welcome / loadout ----------------------------------------------------------------------- */
+/* ---- welcome / the combination library ---------------------------------------------------- */
 function applyWelcome(message) {
-  S.loadout = message.loadout;
-  S.poses = message.poses || {};
-  S.poseSeconds = message.pose_seconds || {};
-  S.slots = Object.keys(message.loadout).sort();
-  buildLoadout();
+  // Already sorted by name (spec/protocol.md 0.6), but sorting again costs nothing and guards
+  // against a future host that forgets to.
+  S.combinations = [...(message.combinations || [])].sort((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  S.combinationsByName = Object.fromEntries(S.combinations.map((c) => [c.name, c]));
+  S.page = 0;
+  // `spec/intent.md`: "The Studio passes require_admitted=False... a match never does." The bench
+  // is exactly that Studio-side caller, and every combination on disk today is unmeasured — this
+  // must be visible, not silent (`spec/sparring_protocol.md` §Host -> client).
+  S.draftsAllowed = Boolean(message.drafts_allowed);
+  updateDraftsChip();
+  buildGrid();
 }
 
-function buildLoadout() {
-  const bar = document.getElementById('loadout');
-  bar.innerHTML = '';
-  S.slots.forEach((slot, index) => {
+function updateDraftsChip() {
+  const chip = document.getElementById('drafts-chip');
+  if (!chip) return;
+  chip.hidden = !S.draftsAllowed;
+}
+
+function totalPages() {
+  return Math.max(1, Math.ceil(S.combinations.length / GRID_SIZE));
+}
+
+function buildGrid() {
+  const grid = document.getElementById('loadout');
+  grid.innerHTML = '';
+  const start = S.page * GRID_SIZE;
+  for (let i = 0; i < GRID_SIZE; i += 1) {
+    const combo = S.combinations[start + i];
     const cell = document.createElement('div');
     cell.className = 'slot';
-    cell.id = `slot-${slot}`;
-    cell.innerHTML =
-      `<span class="key">${index + 1}</span><span class="name">${S.loadout[slot]}</span>`;
-    bar.append(cell);
-  });
+
+    const key = document.createElement('span');
+    key.className = 'key';
+    const name = document.createElement('span');
+    name.className = 'name';
+    const duration = document.createElement('span');
+    duration.className = 'dur';
+
+    if (combo) {
+      key.textContent = GRID_KEYS[i];
+      cell.classList.toggle('staged', S.staged === combo.name);
+      name.textContent = combo.name;
+      duration.textContent = `${combo.seconds.toFixed(2)} s`;
+      cell.addEventListener('click', () => selectCombination(combo.name));
+    } else {
+      key.textContent = '·';        // past the end of the library on the last page
+      cell.classList.add('empty');
+    }
+
+    cell.append(key, name, duration);
+    grid.append(cell);
+  }
+  document.getElementById('page-indicator').textContent = `${S.page + 1} / ${totalPages()}`;
+}
+
+/* Stage a combination by name — from a keypress or a click. Nothing is sent to the host here:
+   `spec/protocol.md` 0.6 collapsed staging and placement into one `intent` message, sent once at
+   commit (`commit()` below). */
+function selectCombination(name) {
+  if (!S.combinationsByName[name]) return;
+  S.staged = name;
+  buildGrid();
+}
+
+function changePage(delta) {
+  if (!S.combinations.length) return;
+  const pages = totalPages();
+  S.page = (S.page + delta + pages) % pages;
+  buildGrid();
 }
 
 /* ---- state / debug --------------------------------------------------------------------------- */
@@ -150,6 +212,10 @@ function applyState(message) {
 
 function applyDebug(message) {
   S.debug = message;
+  if (typeof message.drafts_allowed === 'boolean') {
+    S.draftsAllowed = message.drafts_allowed;
+    updateDraftsChip();
+  }
   /* The pilot's refusals arrive latched on the debug stream (the pilot applies messages a tick
      after the socket, so a direct reply is impossible). Same sentence twice = one event. */
   if (message.pilot_error && message.pilot_error.message !== S.lastPilotError) {
@@ -186,14 +252,13 @@ function drawPanel(data) {
     ? `err ${head.err_mean?.toFixed(3)} rad · dist body ${head.dist ?? '—'} m`
       + ` / plan ${head.dist_plan ?? '—'} m · step ${head.step_ms} ms`
     : '';
-  charts.arrivalRadius = knobValue('arrival_radius_m');
 
-  if (S.showPlan && data.ghost) {
+  if (S.showPlan && data.plan_ghost) {
     const plan = ring.shadowFor('plan');
     plan.material.color.set(0xbc7b4c);          // clay — never mistakable for the red aim ghost
     plan.material.opacity = 0.28;
-    ring.showShadow('plan', data.ghost.x, data.ghost.y, data.ghost.heading,
-      data.ghost.angles, data.ghost.z);
+    ring.showShadow('plan', data.plan_ghost.x, data.plan_ghost.y, data.plan_ghost.heading,
+      data.plan_ghost.angles, data.plan_ghost.z);
   } else {
     ring.hideShadow('plan');
   }
@@ -209,19 +274,25 @@ function drawQueue(queue) {
 
   for (const entry of queue) {
     const row = document.createElement('div');
-    const cls = entry.approaching ? 'approach' : entry.executing ? 'dwell' : 'waiting';
-    row.className = `qrow ${cls}`;
+    row.className = `qrow ${entry.executing ? 'running' : 'waiting'}`;
+
+    const legs = entry.leg_count
+      ? ` · leg ${(entry.leg_index ?? 0) + 1}/${entry.leg_count}` : '';
+    const drift = Number.isFinite(entry.drift_speed_m_s)
+      ? ` · drift ${entry.drift_speed_m_s.toFixed(2)} m/s` : '';
     const spans =
-      `i${entry.issued_at} · c${entry.commit_at ?? '—'} · s${entry.strike_at ?? '—'}`
-      + ` · e${entry.end_tick ?? '—'}${entry.completed_by ? ` (${entry.completed_by})` : ''}`;
-    /* `arrived === false` is a move whose approach ran out of time and threw the pose where it
-       stood. It is not a detail: it is the difference between a landed strike and a missed one. */
-    const state = entry.approaching ? 'walking'
-      : entry.executing ? (entry.arrived === false ? 'timed out' : 'striking')
-        : 'waiting';
-    row.innerHTML =
-      `<span class="state">${state}</span>`
-      + `<span class="pose">${entry.pose}</span><span class="spans">${spans}</span>`;
+      `i${entry.issued_at} · c${entry.commit_at ?? '—'} · e${entry.end_tick ?? '—'}${legs}${drift}`;
+
+    const state = document.createElement('span');
+    state.className = 'state';
+    state.textContent = entry.executing ? 'running' : 'waiting';
+    const pose = document.createElement('span');
+    pose.className = 'pose';
+    pose.textContent = entry.combination;
+    const spansEl = document.createElement('span');
+    spansEl.className = 'spans';
+    spansEl.textContent = spans;
+    row.append(state, pose, spansEl);
     list.append(row);
   }
   if (!queue.length) {
@@ -232,7 +303,10 @@ function drawQueue(queue) {
   }
 }
 
-/* ---- overlay: trail + arrival circle --------------------------------------------------------- */
+/* ---- overlay: trail ------------------------------------------------------------------------- */
+/* Unlike 0.1-0.2 there is no arrival circle to draw: `arrival_radius_m` governed an approach that
+   `spec/intent.md` 3.0 deleted, and nothing tests a radius any more
+   (`spec/sparring_protocol.md` "Two distances, not one"). Only the plan trail survives. */
 function svgPoint(x, y, z = 0) {
   const p = ring.project(x, y, z);
   return p.behind ? null : p;
@@ -247,31 +321,8 @@ function drawOverlay(data) {
       .map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`);
     if (points.length > 1) {
       parts.push(`<polyline points="${points.join(' ')}" fill="none" `
-        + 'stroke="var(--phase-dwell)" stroke-width="1.5" stroke-opacity="0.7" '
+        + 'stroke="var(--phase-running)" stroke-width="1.5" stroke-opacity="0.7" '
         + 'stroke-dasharray="5 4"/>');
-    }
-  }
-
-  /* The arrival circle, at the placement of the commit that is walking. The radius is the live
-     knob, not the constant — turning the knob moves the circle, which is the point. */
-  const walking = (data.queue || []).find((entry) => entry.approaching);
-  const radius = knobValue('arrival_radius_m');
-  if (walking?.placement && radius) {
-    const { x, y } = walking.placement;
-    const rim = [];
-    for (let i = 0; i <= 24; i += 1) {
-      const a = (i / 24) * Math.PI * 2;
-      const p = svgPoint(x + radius * Math.cos(a), y + radius * Math.sin(a));
-      if (p) rim.push(`${p.x.toFixed(1)},${p.y.toFixed(1)}`);
-    }
-    if (rim.length > 2) {
-      parts.push(`<polygon points="${rim.join(' ')}" fill="none" `
-        + 'stroke="var(--phase-approach)" stroke-width="1.5" stroke-opacity="0.8"/>');
-    }
-    const centre = svgPoint(x, y);
-    if (centre) {
-      parts.push(`<line x1="${centre.x - 5}" y1="${centre.y}" x2="${centre.x + 5}" y2="${centre.y}" stroke="var(--phase-approach)"/>`);
-      parts.push(`<line x1="${centre.x}" y1="${centre.y - 5}" x2="${centre.x}" y2="${centre.y + 5}" stroke="var(--phase-approach)"/>`);
     }
   }
   overlay.innerHTML = parts.join('');
@@ -317,16 +368,42 @@ function shadowPosition() {
   return { x: clamp(S.anchor.x + S.offset.x), y: clamp(S.anchor.y + S.offset.y) };
 }
 
-function shadowHeading(at) {
-  const sacco = saccoPosition();
-  if (!sacco) return S.anchor?.heading ?? 0;
-  return Math.atan2(sacco.y - at.y, sacco.x - at.x);
+/* Heading is not a control (`D5`, spec/intent.md "The ghost"): it is *derived* — the fighter's own
+   current heading (read off the streamed pelvis transform) plus the staged combination's own
+   recorded turn. A combination can turn by up to 158°, and a ghost that instead faced the sacco (as
+   0.1-0.2 did) would discard the turn that *is* the motion. Nothing here is sent to the host — this
+   is a preview only, the same role `client/app.js`'s `ghostHeading` plays for a match. */
+function ghostHeading() {
+  const combo = S.staged ? S.combinationsByName[S.staged] : null;
+  if (!combo) return 0;
+  return ring.fighterHeading('red') + combo.heading_delta;
 }
 
-function saccoPosition() {
-  if (S.bluePelvis < 0) return null;
-  const p = ring.bodies[S.bluePelvis]?.position;
-  return p ? { x: p.x, y: p.y } : null;
+/* Since spec/intent.md 3.0 a combination's duration is fixed by its recording, so how far its ghost
+   may sit from the anchor is a fixed **reach**, not a matter of time. `reach_m` is the same number
+   `welcome` carried and the host will check at commit (`server/protocol.py::reach_m`) — measured
+   from the **anchor**, not from where the fighter is standing, because the next move starts from the
+   end of the queue. `rejected` mirrors what the host will do; it is a hint, never the decision. */
+function reachInfo(at) {
+  if (!S.anchor || !S.staged) return null;
+  const combo = S.combinationsByName[S.staged];
+  if (!combo) return null;
+  const metres = Math.hypot(at.x - S.anchor.x, at.y - S.anchor.y);
+  return { metres, reach: combo.reach_m, rejected: metres > combo.reach_m };
+}
+
+function drawReach(info) {
+  const line = document.getElementById('reach-line');
+  if (!line) return;
+  if (!info) {
+    line.textContent = '';
+    line.classList.remove('rejected');
+    return;
+  }
+  line.classList.toggle('rejected', info.rejected);
+  line.textContent = info.rejected
+    ? `${info.metres.toFixed(2)} m — beyond its ${info.reach.toFixed(2)} m reach`
+    : `${info.metres.toFixed(2)} m of ${info.reach.toFixed(2)} m reach`;
 }
 
 function driveShadow(dt) {
@@ -342,17 +419,20 @@ function driveShadow(dt) {
     S.offset.y += dy * scale;
   }
   const at = shadowPosition();
-  const angles = S.poses[S.staged];
-  if (!at || !S.staged || !angles) { ring.hideShadow('red'); return; }
-  ring.showShadow('red', at.x, at.y, shadowHeading(at), angles, S.standHeight);
+  const combo = S.staged ? S.combinationsByName[S.staged] : null;
+  if (!at || !combo) { ring.hideShadow('red'); drawReach(null); return; }
+
+  const reach = reachInfo(at);
+  ring.showShadow('red', at.x, at.y, ghostHeading(), combo.pose, S.standHeight, reach?.rejected);
+  drawReach(reach);
 }
 
 function commit() {
   /* Refusing silently is how the bench's first bug hid — say why nothing will happen. */
-  if (!S.staged) { showError('nothing staged — pick a pose with 1–6 first'); return; }
+  if (!S.staged) { showError('nothing staged — pick a combination first'); return; }
   const at = shadowPosition();
   if (!at) { showError('no anchor yet — waiting for the first state message'); return; }
-  send({ type: 'place', x: at.x, y: at.y, heading: shadowHeading(at) });
+  send({ type: 'intent', combination: S.staged, ghost: [at.x, at.y] });
   send({ type: 'commit' });
   S.offset = { x: 0, y: 0 };
 }
@@ -380,11 +460,12 @@ function buildKnobs(knobs) {
     input.addEventListener('change', () => postKnob(name, input.value));
     row.querySelector('.canon').addEventListener('click', () => postKnob(name, entry.canonical));
     box.append(row);
-    if (name === 'pose_dwell_ticks') {
-      const warning = document.createElement('div');
-      warning.className = 'knob-warning';
-      warning.textContent = '⚠ dwell also rewrites in-flight end_ticks (spec/sparring_protocol.md)';
-      box.append(warning);
+    if (name === 'drift_gain') {
+      const note = document.createElement('div');
+      note.className = 'knob-warning';
+      note.textContent =
+        'only the next commit that starts reads this — a running commit’s legs are already fixed';
+      box.append(note);
     }
   }
 }
@@ -502,8 +583,9 @@ function noteScript() {
     : entries?.length ? `stopped · ${index} of ${entries.length} sent` : 'not running';
 }
 
-/* Called on every debug tick: fire the next entry when its conditions hold. Staging is sent just
-   before the commit so a manual key press cannot interleave a different pose into a script step. */
+/* Called on every debug tick: fire the next entry when its conditions hold. `intent` is sent just
+   before `commit` in the same batch, as `commit()` above does, so a manual key press cannot
+   interleave a different combination into a script step. */
 function runScriptStep(tick) {
   const script = S.script;
   if (!script.running) return;
@@ -512,10 +594,7 @@ function runScriptStep(tick) {
   if (entry.at_tick !== undefined && tick < entry.at_tick) return;
   if (!S.canCommit) return;
 
-  send({ type: 'stage', slot: String(entry.slot) });
-  if (entry.x !== undefined) {
-    send({ type: 'place', x: entry.x, y: entry.y, heading: entry.heading ?? 0 });
-  }
+  send({ type: 'intent', combination: String(entry.combination), ghost: [entry.x ?? 0, entry.y ?? 0] });
   send({ type: 'commit' });
   script.index += 1;
   noteScript();
@@ -568,6 +647,8 @@ document.getElementById('tgl-plan').addEventListener('change', (event) => {
 document.getElementById('tgl-trail').addEventListener('change', (event) => {
   S.showTrail = event.currentTarget.checked;
 });
+document.getElementById('page-prev').addEventListener('click', () => changePage(-1));
+document.getElementById('page-next').addEventListener('click', () => changePage(1));
 document.getElementById('btn-script-run').addEventListener('click', startScript);
 document.getElementById('btn-script-stop').addEventListener('click', stopScript);
 document.getElementById('btn-script-save').addEventListener('click', () => {
@@ -589,12 +670,10 @@ document.addEventListener('keydown', (raw) => {
 
   if (DRIVE[key]) { S.held.add(key); raw.preventDefault(); return; }
 
-  const index = Number(key) - 1;
-  if (index >= 0 && index < S.slots.length && key >= '1' && key <= '6') {
-    S.staged = S.slots[index];
-    send({ type: 'stage', slot: S.staged });
-    S.slots.forEach((slot) =>
-      document.getElementById(`slot-${slot}`)?.classList.toggle('staged', slot === S.staged));
+  const index = GRID_KEYS.indexOf(key);
+  if (index >= 0) {
+    const combo = S.combinations[S.page * GRID_SIZE + index];
+    if (combo) selectCombination(combo.name);
     raw.preventDefault();
     return;
   }
@@ -604,8 +683,10 @@ document.addEventListener('keydown', (raw) => {
       S.staged = null;
       S.offset = { x: 0, y: 0 };
       send({ type: 'clear' });
-      S.slots.forEach((slot) => document.getElementById(`slot-${slot}`)?.classList.remove('staged'));
+      buildGrid();
       break;
+    case '[': changePage(-1); raw.preventDefault(); break;
+    case ']': changePage(1); raw.preventDefault(); break;
     case 'p': send({ type: S.paused ? 'resume' : 'pause' }); break;
     case 'r': send({ type: 'reset', seed: Number(document.getElementById('reset-seed').value) || undefined }); break;
     case 'ArrowLeft':

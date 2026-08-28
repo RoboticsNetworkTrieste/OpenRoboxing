@@ -1,17 +1,23 @@
 /* The sparring bench's trace charts: strip charts on one shared x-axis of session ticks.
  *
- * Five strips — phase bands, tracking error, distance to target, root heights, step cost — drawn on
+ * Four strips — phase bands, tracking error, distance to ghost, root heights, step cost — drawn on
  * one canvas so the shared cursor and the shared hover cannot drift between them. Data arrives from
  * `GET /api/series` (already downsampled server-side); this file only draws.
  *
+ * Ported for spec/intent.md 3.0 (B3): the phase band drops APPROACH/DWELL for one RUNNING (a
+ * combination has no walk-then-throw split), the arrival-radius reference line on the distance
+ * strip is gone (nothing tests that radius any more — spec/sparring_protocol.md "Two distances, not
+ * one"), and leg boundaries are drawn on the error strip as `keyframe_events`, the direct answer to
+ * "did the body settle into the pose" now that nothing watches for settling.
+ *
  * Colour discipline (dataviz): series colours follow the entity (the red/blue seats keep the
- * product's seat colours; the five phase colours are validated against the ink surface and defined
+ * product's seat colours; the four phase colours are validated against the ink surface and defined
  * once, in sparring.css). Text wears text tokens, never the series colour.
  */
 
 'use strict';
 
-const PHASE_NAMES = ['OPENING', 'WAITING', 'APPROACH', 'DWELL', 'HOLD'];
+const PHASE_NAMES = ['OPENING', 'WAITING', 'RUNNING', 'HOLD'];
 
 /* Read a CSS custom property off <body>, with a fallback so a missing token sheet degrades to
    something visible rather than to invisible black-on-black. */
@@ -25,8 +31,7 @@ function palette() {
     phases: [
       cssVar('--phase-opening', '#93AC9E'),
       cssVar('--phase-waiting', '#3FA9F5'),
-      cssVar('--phase-approach', '#BC7B4C'),
-      cssVar('--phase-dwell', '#4FD1A0'),
+      cssVar('--phase-running', '#4FD1A0'),
       cssVar('--phase-hold', '#B7C9BE'),
     ],
     red: cssVar('--seat-red', '#ff6b6b'),
@@ -44,9 +49,9 @@ function palette() {
 const STRIPS = [
   { id: 'phase', label: 'phase', height: 1 },
   { id: 'error', label: 'tracking err · rad', height: 3, series: ['err_mean', 'err_max'] },
-  /* Body and plan against the same placement. The pair is the diagnosis of an approach: the
-     kinematic plan arrives every time, the body under physics is what has to get there. */
-  { id: 'dist', label: 'dist to target · m', height: 3, series: ['dist', 'dist_plan'] },
+  /* Body and plan against the same ghost. Under 3.0 this is a trend across a whole commit rather
+     than an arrival test — spec/sparring_protocol.md "Two distances, not one". */
+  { id: 'dist', label: 'dist to ghost · m', height: 3, series: ['dist', 'dist_plan'] },
   { id: 'root', label: 'root height · m', height: 2, series: ['root_h_red', 'root_h_blue'] },
   { id: 'step', label: 'step · ms', height: 2, series: ['step_ms'] },
 ];
@@ -72,7 +77,6 @@ export class ChartStack {
     this.data = null;
     this.cursor = null;      // tick the vertical cursor sits on, or null
     this.onSeek = null;      // cb(tick) — a click scrubs there
-    this.arrivalRadius = null;  // live knob: the threshold drawn across the distance strip
 
     this.canvas.addEventListener('mousemove', (event) => this._hover(event));
     this.canvas.addEventListener('mouseleave', () => { this.tip.hidden = true; this._hoverTick = null; this.draw(); });
@@ -205,6 +209,21 @@ export class ChartStack {
       ctx.stroke();
     }
 
+    /* Keyframe events: one accent-coloured mark per leg boundary, on the error strip's bottom edge
+       (replans sit on the top, so the two never overlap). This is 3.0's replacement for the
+       arrival-radius line 0.2 drew on the distance strip — a leg's end is exact arithmetic, and the
+       tracking error logged at it (spec/sparring_protocol.md §"Per-keyframe tracking error") is the
+       concrete number worth marking, not a threshold nothing tests any more. */
+    ctx.strokeStyle = colors.accent;
+    for (const [tick] of d.keyframe_events || []) {
+      const x = this._x(tick, layout);
+      if (x < layout.left || x > layout.left + layout.plotW) continue;
+      ctx.beginPath();
+      ctx.moveTo(x, errRow.y + errRow.h);
+      ctx.lineTo(x, errRow.y + errRow.h - 5);
+      ctx.stroke();
+    }
+
     /* The shared cursor: scrub position first, hover as the lighter twin. */
     for (const [tick, alpha] of [[this.cursor, 0.9], [this._hoverTick, 0.35]]) {
       if (tick === null || tick === undefined) continue;
@@ -250,16 +269,14 @@ export class ChartStack {
     }
     if (!Number.isFinite(hi) || hi <= 0) hi = 1;
     if (row.id === 'step') hi = Math.max(hi, this.budgetMs * 1.1);
-    if (row.id === 'dist' && this.arrivalRadius) hi = Math.max(hi, this.arrivalRadius * 1.4);
     const yOf = (v) => row.y + row.h - 3 - (v / hi) * (row.h - 8);
 
-    /* Reference lines: the tick budget, and the arrival radius — the threshold that decides
-       whether a commit lands or waits out its timeout, so "the body never got inside" has to be
-       readable at a glance rather than inferred from the numbers. */
-    const rule = row.id === 'step' ? this.budgetMs
-      : row.id === 'dist' ? this.arrivalRadius : null;
-    if (rule) {
-      const y = yOf(rule);
+    /* The one reference line left: the step-time budget. 0.2 also drew the arrival radius here, on
+       the distance strip — retired with the approach it tested (spec/sparring_protocol.md "Two
+       distances, not one"): nothing tests a radius at 3.0, so a line here would show a number
+       nothing checks any more. */
+    if (row.id === 'step') {
+      const y = yOf(this.budgetMs);
       ctx.strokeStyle = colors.grid;
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
@@ -268,8 +285,7 @@ export class ChartStack {
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = colors.muted;
-      const label = row.id === 'step' ? `${this.budgetMs}` : `arrival ${rule.toFixed(2)}`;
-      ctx.fillText(label, layout.left + layout.plotW - 60, y - 10);
+      ctx.fillText(`${this.budgetMs}`, layout.left + layout.plotW - 60, y - 10);
     }
 
     for (const name of row.series) {

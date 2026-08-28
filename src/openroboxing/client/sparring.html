@@ -24,6 +24,7 @@
   <span class="torc-kicker">sparring bench</span>
   <span class="machine-chip" id="machine-chip" data-state="OPENING">OPENING</span>
   <span class="torc-hud-label" id="tick-line">tick —</span>
+  <span class="drafts-chip" id="drafts-chip" hidden title="admission is not enforced this session (spec/intent.md)">drafts allowed — unmeasured</span>
   <div class="top-actions">
     <button id="btn-pause" class="action" title="P">pause</button>
     <button id="btn-reset" class="action" title="R">reset</button>
@@ -58,9 +59,15 @@
   <aside class="column">
 
     <section class="card">
-      <div class="card-head"><span class="torc-kicker">loadout</span>
-        <span class="torc-hud-label push">1–6 stage · WASD aim · SPACE commit · Q clear</span></div>
+      <div class="card-head"><span class="torc-kicker">combinations</span>
+        <span class="torc-hud-label push">1–9 stage · [ ] page · WASD aim · SPACE commit · Q clear</span></div>
       <div class="loadout" id="loadout"></div>
+      <div class="loadout-paging">
+        <button class="page-btn" id="page-prev" type="button" aria-label="previous page">« prev</button>
+        <span class="page-indicator" id="page-indicator">1 / 1</span>
+        <button class="page-btn" id="page-next" type="button" aria-label="next page">next »</button>
+      </div>
+      <div class="reach-line" id="reach-line"></div>
       <div class="error" id="error" hidden></div>
     </section>
 
@@ -92,8 +99,8 @@
           <button class="action" id="btn-script-load">load</button>
         </div></div>
       <textarea id="script" class="script" spellcheck="false"
-        placeholder='[{"slot": "1", "x": 1.2, "y": -0.4, "heading": 1.57},
- {"slot": "2", "x": 0.5, "y": 0.5, "heading": 0, "at_tick": 500}]'></textarea>
+        placeholder='[{"combination": "shadow-boxing-r-001-a359-00", "x": 1.2, "y": -0.4},
+ {"combination": "ib-dodge-270-r-001-a437-00", "x": 0.5, "y": 0.5, "at_tick": 500}]'></textarea>
       <div class="torc-hud-label" id="script-note">not running</div>
     </section>
 
