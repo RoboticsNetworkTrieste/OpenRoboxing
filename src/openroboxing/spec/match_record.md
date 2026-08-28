@@ -1,6 +1,7 @@
 # match_record.md — what a match writes down
 
-Version **0.1** · created 2026-08-07 · task `M3-T4`
+Version **0.3** · created 2026-08-07 · task `M3-T4` · combination commits, `M6` Phase 3 (A5),
+2026-08-28
 
 A match record is the *only* output of a match. Scoring, replays, the league table and any dispute
 are all resolved from it, so it is specified before `runtime/match.py` exists (`CLAUDE.md`
@@ -26,7 +27,11 @@ A committed move is an open-ended walk to its placement followed by a pose phase
 that a bad round is not a long punishment.
 
 *(Before `spec/intent.md` 1.1 a move was its pose phase alone and this said 30–70. Walking to a
-placement used to be free, and is now most of what a commit does.)*
+placement used to be free, and is now most of what a commit does. **This paragraph itself now
+predates `spec/intent.md` 3.0**, which removed the walk entirely — a commit's length is
+`record.duration_ticks`, fixed by the recording, 1.6–10.67 s — so the exchange count above needs
+re-measuring against combination lengths rather than walk-plus-pose lengths; that is `M4-T4`'s job,
+not this changelog's, and no number is invented here in its place.)*
 
 The record carries the format it was fought under. A match fought to different numbers must still be
 readable, so `format` is data, not an assumption baked into the reader.
@@ -130,17 +135,44 @@ Glove-on-glove (a parry) and body-on-body (a clinch) are not hits and are not re
 `KnockdownEvent`: `fighter`, `start_tick`, `end_tick`, `lowest_torso_height_m`, `min_upright`,
 `became_knockout` (bool).
 
-`CommitEvent`: `fighter`, `slot`, `pose_name`, `issued_at`, `commit_at`, `strike_at`, `end_tick`,
-`arrived`, `placement`, `adjustment`. This is `runtime/intents.Commit` — the record of what the
-*player* did, as opposed to what the physics did.
+### `CommitEvent` (0.3 — a combination and a ghost, not a loadout slot and a placement)
 
-Since `spec/intent.md` 1.1 a commit walks to its placement before it throws, so three of those fields
-are **null until the move reaches that stage**, and a commit still walking at the bell has all three
-null. `strike_at` is the tick the punch was actually thrown — the one to score aggression on, since
-`commit_at` is now the start of a walk that may run for seconds. `arrived` is false when the approach
-timed out and the fighter threw where it stood, which is how a replay can show a move that fell
-short. Records written before 1.1 have no `strike_at` or `arrived` at all; for those `commit_at`
-*was* the moment the move fired.
+`CommitEvent`: `fighter`, `combination`, `ghost`, `issued_at`, `commit_at`, `end_tick`,
+`drift_speed_m_s`. Built by `runtime/fight.py::FightWorld.commits()` from
+`runtime/intents.Commit` — the record of what the *player* asked for — with one number physics
+added: `drift_speed_m_s`, described below. There is exactly one representation of a commit's shape
+in the codebase; this section documents that one rather than inventing a second.
+
+- `combination` — the name of the recorded combination played (`spec/combination.md`), replacing
+  1.0-2.2's `slot` / `pose_name`: a commit no longer names a loadout slot, because there is no
+  loadout to slot into (`spec/intent.md` 3.0's `D6`).
+- `ghost` — world `(x, y)` the combination's last keyframe was asked to land on, replacing 0.4-2.2's
+  `placement` (which also carried a player-set heading; a ghost's heading is now derived, never
+  chosen — `spec/intent.md` "Ghost heading is derived, not staged").
+- `issued_at`, `commit_at`, `end_tick` — as `runtime/intents.Commit` defines them. `commit_at` and
+  `end_tick` are **null until the commit becomes current** — never "unknown": the instant
+  `commit_at` is stamped, `end_tick = commit_at + record.duration_ticks` is exact arithmetic, fixed
+  for good (`spec/intent.md` "A commit's span"). This reverses 1.1-2.2's model, where a walk's
+  length depended on distance under physics and could not be known until the fighter arrived, so a
+  record from that era instead had `strike_at` (the tick the punch was actually thrown) and
+  `arrived` (false when the approach timed out and the fighter threw where it stood) — both gone at
+  3.0, along with the approach they distinguished. There is no longer a `placement` or `adjustment`
+  field either: a combination carries no live adjustment envelope (`spec/combination.md`), and the
+  approach that `placement` fed is gone outright (`spec/intent.md` "Removed at 3.0").
+- `drift_speed_m_s` — **new at 0.3.** Owner decision, 2026-08-28 (`spec/intent.md` "Off-target
+  execution"): a queued combination whose `commit_at` arrives with the fighter somewhere other than
+  where its previous ghost was aimed is re-warped for real, from the fighter's *true* position, and
+  still reaches its ghost — running whatever drift that needs, even above `APPROACH_SPEED_M_S`.
+  Nothing is clamped and nothing raises. **A move that could not track its plan cleanly must be
+  visible in the record rather than silent**, so the drift speed that warp implied is recorded
+  unconditionally for every *started* commit — not only the ones that drifted hard, because a move
+  that tracked its ghost cleanly at a low drift speed is exactly the baseline a high one is read
+  against. Like `commit_at`/`end_tick`, it is `null` for a commit that has not started yet: there is
+  nothing to measure before a commit is current.
+
+Records written before 0.3 have no `combination`, `ghost` or `drift_speed_m_s` at all, and instead
+carry the 1.0-2.2 fields named above; a reader that needs both eras to look the same has to branch on
+which fields are present, the same way `arena_config()` branches on a record predating 0.2.
 
 ### The state trace
 
@@ -208,6 +240,15 @@ argument about how hard a punch landed is settled by the record, or not at all.
 
 ## Changelog
 
+- **0.3** (2026-08-28, `M6` Phase 3 / A5) — **`CommitEvent` catches up with `spec/intent.md` 3.0: a
+  commit is a combination.** `slot`/`pose_name` become `combination`; `placement` (position and a
+  player-set heading) becomes `ghost` (position only — the heading is derived, never chosen); and
+  `strike_at`/`arrived`, which distinguished a walk-then-throw's two endings, are gone with the
+  approach they described (`spec/intent.md` "Removed at 3.0"). New: `drift_speed_m_s`, the speed a
+  commit's re-warp needed to reach its ghost when it started off-target — owner decision, 2026-08-28,
+  recorded so a move that could not track its plan cleanly is visible in the record rather than
+  silent. No change to `HitEvent`, `KnockdownEvent`, the state trace, or anything upstream of a
+  commit's own shape.
 - **0.2** (2026-08-08) — added `arena`, the `ArenaConfig` a match was fought in, so a record stays
   replayable once `M4-T4` starts changing the ring. Records without it are read as the defaults.
   Added *What replays, and what is a reconstruction* above; no field changed meaning.

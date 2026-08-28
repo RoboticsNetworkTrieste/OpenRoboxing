@@ -38,11 +38,19 @@ import time
 
 from openroboxing.paths import LOADOUT_DIR
 from openroboxing.runtime.arena import FIGHTERS
-from openroboxing.runtime.fight import DEFAULT_CONTEXT, FightWorld, ScriptedPilot
-from openroboxing.runtime.intents import Loadout, Placement
+from openroboxing.runtime.fight import FightWorld, ScriptedPilot
+from openroboxing.runtime.intents import Loadout
 from openroboxing.runtime.match import SCHEMA_VERSION, Match, MatchFormat
 from openroboxing.runtime.pool import fighter_seed
 from openroboxing.spec.constants import TICK_HZ
+
+# NOTE (A5, motion-combinations Phase 3): this whole tool still scripts `spec/intent.md` 1.1's
+# placement-and-pose commits — `Placement`, `DEFAULT_CONTEXT` and `FightWorld(loadouts=...)` are all
+# gone at 3.0 (a commit is a combination and a ghost; see `runtime/intents.py`, `runtime/fight.py`).
+# Porting `main()`/`_script()` to the combination model is Part B's job. Only the two now-missing
+# names are dropped from these imports, which is what `_versions()` (still current, and imported
+# directly by `tests/test_manifest.py::test_a_real_record_traces`) needs to be importable again;
+# `main()` and `_script()` below remain unported and will raise `NameError` if actually called.
 
 #: Ticks between one fighter's commits. Wide enough that a move finishes before the next is staged —
 #: a jab is 6 tokens, 40 ticks — and it staggers the two fighters so they are not mirror images.
@@ -104,8 +112,16 @@ def _versions(pose_library: str) -> dict[str, str]:
     }
 
 
-def _script(fighter: str, slots: list[str], round_ticks: int) -> list[tuple[int, str, Placement]]:
+def _script(fighter: str, slots: list[str], round_ticks: int) -> list[tuple[int, str, tuple[float, float]]]:
     """A fighter's commits for one round: every slot in turn, on the cadence, until the bell.
+
+    **Not ported to `spec/intent.md` 3.0** (A5, motion-combinations Phase 3 — Part B's job): ``slots``
+    here is still a loadout slot name, not a combination from the shared library, and ``ScriptedPilot``
+    now expects the latter (`runtime/fight.py`). Only the third element of each tuple was adapted, from
+    0.4-2.2's ``Placement`` (position *and* a player-set heading) to a bare ``(x, y)`` ghost — 3.0's
+    heading is derived, never chosen (`runtime/warp.py::ghost_heading`) — so this function at least
+    returns a shape `ScriptedPilot.act` can destructure without touching the deleted ``Placement``
+    class; it does not make a match actually run.
 
     Each is placed on a circle about the centre so the two stand :data:`ORBIT_SEPARATION_M` apart
     while circling it from opposite sides — a measured distance, not a picked one, and notably
@@ -125,9 +141,7 @@ def _script(fighter: str, slots: list[str], round_ticks: int) -> list[tuple[int,
     for index, tick in enumerate(ticks):
         angle = phase + (index // 2) * ORBIT_STEP_RAD
         x, y = radius * math.cos(angle), radius * math.sin(angle)
-        # Facing the centre, which is where the opponent is standing on the far side of it.
-        placement = Placement(position=(x, y), heading=math.atan2(-y, -x))
-        script.append((tick, order[index % len(order)], placement))
+        script.append((tick, order[index % len(order)], (x, y)))
     return script
 
 
@@ -146,7 +160,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--get-up-seconds", type=float, default=None, help="override the get-up window, seconds"
     )
-    parser.add_argument("--context", default=DEFAULT_CONTEXT, help="ambient clip between commits")
+    # `DEFAULT_CONTEXT` (the ambient clip between commits) is gone at `spec/intent.md` 3.0: every leg
+    # of a combination runs `walk_boxing` unconditionally (`runtime.sequence.COMBINATION_CONTEXT`),
+    # so there is nothing left for a player-chosen ambient style to mean. This flag is already dead —
+    # `FightWorld` below has no `context=` parameter any more either — kept only so `main()`'s CLI
+    # surface does not shrink further than the one-line import fix this task's scope allows (A5).
+    parser.add_argument("--context", default="walk_boxing", help="unused; not ported to 3.0")
     parser.add_argument("--match-id", default=None, help="record id; defaults to the seed")
     parser.add_argument("--out", type=Path, default=None, help="write the record to this json path")
     args = parser.parse_args(argv)

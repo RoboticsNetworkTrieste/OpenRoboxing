@@ -32,6 +32,7 @@ from openroboxing.runtime.replay import (
     ReplayWorld,
     replay_frames,
 )
+from openroboxing.studio.combination_record import CombinationRecord, CombinationSource, Keyframe
 
 pytest.importorskip("mujoco")
 
@@ -44,6 +45,39 @@ def arena():
     return build_arena(ArenaConfig())
 
 
+def _combination(name: str = "combo-a") -> CombinationRecord:
+    """A small, admitted combination — cheap enough to build a `FighterRuntime` from.
+
+    `spec/intent.md` 3.0: a commit carries a combination and a ghost, not a `Loadout` slot. Each
+    test file in this repo keeps its own copy of this builder rather than sharing a fixtures module
+    (see e.g. `test_server.py`, `test_fight.py`); this replay module only needs one entry, since it
+    never actually generates through it — it just needs a valid library to build a `FighterRuntime`
+    and read `root_qpos` off it.
+    """
+    from openroboxing.runtime.conventions import G1
+
+    angles = {joint: 0.0 for joint in G1.mujoco_joint_names}
+    keyframes = [
+        Keyframe(dict(angles), None, (0.0, 0.0), 0.0),
+        Keyframe(dict(angles), 6, (0.15, 0.0), 0.0),
+        Keyframe(dict(angles), 6, (0.3, 0.0), 0.0),
+    ]
+    return CombinationRecord(
+        name=name,
+        library_version="v0.2",
+        source=CombinationSource("t", 0, 100, False),
+        keyframes=keyframes,
+        telegraph_ms=180.0,
+        tracking_error_rad=0.1,
+        admission="admitted",
+    )
+
+
+@pytest.fixture(scope="module")
+def library() -> dict[str, CombinationRecord]:
+    return {"combo-a": _combination("combo-a")}
+
+
 def _standing_qpos(arena) -> np.ndarray:
     import mujoco
 
@@ -52,27 +86,43 @@ def _standing_qpos(arena) -> np.ndarray:
     return data.qpos.copy()
 
 
-def _synthetic_trace(arena, ticks: int, drop: str | None = None, from_tick: int = 0) -> np.ndarray:
+def _synthetic_trace(
+    arena, ticks: int, library=None, drop: str | None = None, from_tick: int = 0
+) -> np.ndarray:
     """A trace of a fighter standing, optionally with one of them sinking to the canvas."""
     from openroboxing.runtime.fight import FighterRuntime, IdlePilot
 
     base = _standing_qpos(arena)
     trace = np.tile(base, (ticks, 1)).astype(np.float32)
     if drop is not None:
-        from openroboxing.paths import LOADOUT_DIR
-        from openroboxing.runtime.intents import Loadout
-
-        loadout = Loadout.load(LOADOUT_DIR / "orthodox.json")
+        if library is None:
+            library = {"combo-a": _combination("combo-a")}
 
         class _Stub:
             pass
 
-        runtime = FighterRuntime(drop, arena, _Stub(), loadout, IdlePilot())
+        runtime = FighterRuntime(drop, arena, _Stub(), library, IdlePilot())
         trace[from_tick:, runtime.root_qpos[2]] = 0.06  # torso on the canvas
     return trace
 
 
-def _write(tmp_path, traces: dict[int, np.ndarray], **overrides) -> object:
+#: One commit, in the shape `runtime/fight.py::FightWorld.commits()` actually emits
+#: (`spec/match_record.md` 0.3's ``CommitEvent``): a combination and a ghost, not a loadout slot
+#: and a placement, plus the achieved drift speed the commit's warp needed to reach that ghost.
+DEFAULT_COMMITS = [
+    {
+        "fighter": "red",
+        "combination": "combo-a",
+        "ghost": [0.3, 0.0],
+        "issued_at": 2,
+        "commit_at": 32,
+        "end_tick": 44,
+        "drift_speed_m_s": 0.05,
+    }
+]
+
+
+def _write(tmp_path, traces: dict[int, np.ndarray], commits=None, **overrides) -> object:
     """Write a record + trace pair to disk the way :meth:`MatchRecord.save` does."""
     record = MatchRecord(
         match_id="replay-test",
@@ -91,7 +141,7 @@ def _write(tmp_path, traces: dict[int, np.ndarray], **overrides) -> object:
                 ticks=trace.shape[0],
                 ended_by="bell",
                 knocked_out=None,
-                commits=[{"fighter": "red", "slot": "1", "issued_at": 2}],
+                commits=list(DEFAULT_COMMITS if commits is None else commits),
                 trace=trace,
             )
         )
@@ -230,7 +280,43 @@ def test_a_replay_reports_the_commits_that_were_recorded(tmp_path, arena) -> Non
     """A replay does not re-derive what the player did — it reads it back."""
     world = ReplayWorld(RecordedMatch.load(_write(tmp_path, {0: _synthetic_trace(arena, 30)})))
     world.reset_round(0)
-    assert world.commits() == [{"fighter": "red", "slot": "1", "issued_at": 2}]
+    assert world.commits() == DEFAULT_COMMITS
+
+
+def test_a_replay_carries_the_achieved_drift_speed(tmp_path, arena) -> None:
+    """`spec/intent.md` "Off-target execution", owner decision 2026-08-28: a commit that started
+    off-target still reaches its ghost, running whatever drift that needs, and that drift speed must
+    be visible in the record rather than silent. It is `runtime/fight.py::FightWorld.commits()`'s
+    ``drift_speed_m_s``, and a replay reads it back unchanged, like every other commit field."""
+    hard_drift = [{**DEFAULT_COMMITS[0], "drift_speed_m_s": 4.75}]
+    world = ReplayWorld(
+        RecordedMatch.load(_write(tmp_path, {0: _synthetic_trace(arena, 10)}, commits=hard_drift))
+    )
+    world.reset_round(0)
+    assert world.commits()[0]["drift_speed_m_s"] == pytest.approx(4.75)
+
+
+def test_a_commit_not_yet_started_carries_no_drift_speed(tmp_path, arena) -> None:
+    """`FightWorld.commits()`'s own contract: ``drift_speed_m_s`` is ``None`` until a commit starts
+    — there is nothing to measure yet, the same reason ``commit_at``/``end_tick`` are ``None`` then
+    (`spec/intent.md` "A commit's span"). A replay must not invent a number here."""
+    queued = [
+        {
+            "fighter": "red",
+            "combination": "combo-a",
+            "ghost": [0.3, 0.0],
+            "issued_at": 2,
+            "commit_at": None,
+            "end_tick": None,
+            "drift_speed_m_s": None,
+        }
+    ]
+    world = ReplayWorld(
+        RecordedMatch.load(_write(tmp_path, {0: _synthetic_trace(arena, 10)}, commits=queued))
+    )
+    world.reset_round(0)
+    assert world.commits()[0]["drift_speed_m_s"] is None
+    assert world.commits()[0]["commit_at"] is None
 
 
 def test_the_observed_trace_matches_the_recorded_one(tmp_path, arena) -> None:
