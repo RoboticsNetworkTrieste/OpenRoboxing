@@ -1,4 +1,4 @@
-"""Is one seat worth points? (docs/ASSUMPTIONS.md §A12)
+"""Is one seat worth points? (docs/ASSUMPTIONS.md §A12; ported for combinations, B2)
 
 The M4-T2 latency A/B incidentally measured red winning 5 of 16 *baseline* matches. The interval
 contained 0.5, so nothing was established — but if the seat itself is worth points, then Swiss
@@ -15,14 +15,19 @@ Two conditions, identical except for **which agent sits where**:
 Read it like this:
 
 - red's win rate **follows the agent seed** (high in one condition, low in the other) -> the agents
-  differ, the seats do not. Harmless: they open with different slots from a right-handed loadout.
+  differ, the seats do not. Harmless: they open by reading the same shared combination library
+  differently (`server/agent.py::BaselineAgent`'s own cycling, seeded).
 - red's win rate **stays with the seat** (similar in both) -> the *seat* is worth points. That is a
   fairness bug and it matters before anybody is paired.
 
-Usage
------
-    python -m openroboxing.tools.seat_fairness --matches 20
-    python -m openroboxing.tools.seat_fairness --matches 40 --round-seconds 20 --out fairness.json
+Both seats read the same shared combination library from ``welcome`` (`spec/intent.md`'s `D6` — there
+is no per-seat loadout left to swap), so what varies between conditions is only which agent
+:class:`~openroboxing.server.agent.BaselineAgent` seed sits where. Built on
+:class:`~openroboxing.server.host.MatchHost`, which never accepts a draft combination
+(`spec/intent.md` "Admission is enforced at construction"); there is no ``--allow-draft`` here for the
+same reason `tools/serve_match.py` has none.
+
+Run: ``.venv_mb/bin/python -m openroboxing.tools.seat_fairness --matches 4 --round-seconds 10``
 """
 
 from __future__ import annotations
@@ -33,20 +38,20 @@ import json
 from pathlib import Path
 
 from openroboxing.league.scoring import score_match, traces_from_replay
-from openroboxing.paths import LOADOUT_DIR
+from openroboxing.paths import COMBINATION_DIR
 from openroboxing.runtime.arena import FIGHTERS
-from openroboxing.runtime.intents import Loadout
 from openroboxing.runtime.match import MatchFormat
 from openroboxing.server.agent import BaselineAgent
 from openroboxing.server.client import play_match
 from openroboxing.server.host import MatchHost
 from openroboxing.spec.constants import TICK_HZ
+from openroboxing.studio import combination_record as cr
 from openroboxing.tools.latency_ab import _wilson_halfwidth
 
 
-async def _one(loadouts, match_format, seed: int, red_seed: int, blue_seed: int) -> str | None:
+async def _one(libraries, match_format, seed: int, red_seed: int, blue_seed: int) -> str | None:
     host = MatchHost(
-        loadouts=loadouts,
+        libraries=libraries,
         match_format=match_format,
         match_seed=seed,
         match_id=f"seat-{seed}",
@@ -63,8 +68,11 @@ async def _one(loadouts, match_format, seed: int, red_seed: int, blue_seed: int)
     return score_match(recorded.record, traces_from_replay(recorded)).winner
 
 
-def run(matches: int, round_seconds: float, rounds: int, seed: int) -> dict:
-    loadouts = {f: Loadout.load(LOADOUT_DIR / "orthodox.json") for f in FIGHTERS}
+def run(matches: int, round_seconds: float, rounds: int, seed: int, library_dir: Path) -> dict:
+    library = {p.stem: cr.load(p) for p in sorted(library_dir.glob("*.json"))}
+    if not library:
+        raise SystemExit(f"no combinations in {library_dir}")
+    libraries = {f: library for f in FIGHTERS}
     match_format = MatchFormat(
         rounds=rounds,
         round_ticks=int(round(round_seconds * TICK_HZ)),
@@ -78,7 +86,7 @@ def run(matches: int, round_seconds: float, rounds: int, seed: int) -> dict:
         for index in range(matches):
             # The same match seeds in both conditions, so physics is not a confounder.
             winner = asyncio.run(
-                _one(loadouts, match_format, seed + index, red_seed, blue_seed)
+                _one(libraries, match_format, seed + index, red_seed, blue_seed)
             )
             if winner is None:
                 draws += 1
@@ -108,11 +116,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rounds", type=int, default=1)
     parser.add_argument("--round-seconds", type=float, default=20.0)
     parser.add_argument("--seed", type=int, default=5000)
+    parser.add_argument(
+        "--library", type=Path, default=COMBINATION_DIR, help="combination library directory"
+    )
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
 
     print(f"seat fairness: {args.matches} matches per condition, same match seeds in both")
-    results = run(args.matches, args.round_seconds, args.rounds, args.seed)
+    results = run(args.matches, args.round_seconds, args.rounds, args.seed, args.library)
 
     print("\ncondition   red agent   red wins   draws   red win rate   95% interval")
     for label, data in results.items():

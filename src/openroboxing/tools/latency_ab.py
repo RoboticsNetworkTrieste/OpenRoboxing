@@ -1,4 +1,4 @@
-"""Does injected latency change who wins? (M4-T2)
+"""Does injected latency change who wins? (M4-T2; ported for combinations, B2)
 
 Acceptance criterion from WORKPLAN.md M4-T2:
   artificially injecting 200 ms latency does not change match outcomes systematically (run a
@@ -8,14 +8,18 @@ Two identical baseline agents play N matches with no latency, then N more with o
 the handicapped seat's win rate moves outside what the sample size can explain, the host is giving
 one side an advantage and that is a bug in the host, not in the network.
 
-Usage
------
-    python -m openroboxing.tools.latency_ab --matches 12 --latency-ms 200
-    python -m openroboxing.tools.latency_ab --matches 30 --round-seconds 20 --out ab.json
-
 Why this is a fair test: the host applies queued intents on its **own** 30 Hz tick and never waits
 for a client (`spec/protocol.md` §Latency). Latency should therefore delay *when* a commit lands and
 nothing else — the claim being checked.
+
+Both agents read the shared combination library from ``welcome`` (`spec/intent.md`'s `D6`;
+:class:`~openroboxing.server.agent.BaselineAgent` already speaks it — see its module docstring), so
+there is nothing loadout-shaped left for this tool to choose per seat, only which library to serve.
+Built on :class:`~openroboxing.server.host.MatchHost`, which never accepts a draft combination
+(`spec/intent.md` "Admission is enforced at construction"); there is no ``--allow-draft`` here for the
+same reason `tools/serve_match.py` has none.
+
+Run: ``.venv_mb/bin/python -m openroboxing.tools.latency_ab --matches 4 --round-seconds 10``
 """
 
 from __future__ import annotations
@@ -27,14 +31,14 @@ import math
 from pathlib import Path
 
 from openroboxing.league.scoring import score_match, traces_from_replay
-from openroboxing.paths import LOADOUT_DIR
+from openroboxing.paths import COMBINATION_DIR
 from openroboxing.runtime.arena import FIGHTERS
-from openroboxing.runtime.intents import Loadout
 from openroboxing.runtime.match import MatchFormat
 from openroboxing.server.agent import BaselineAgent
 from openroboxing.server.client import play_match
 from openroboxing.server.host import MatchHost
 from openroboxing.spec.constants import TICK_HZ
+from openroboxing.studio import combination_record as cr
 
 
 def _wilson_halfwidth(wins: int, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -48,10 +52,10 @@ def _wilson_halfwidth(wins: int, n: int, z: float = 1.96) -> tuple[float, float]
     return (max(0.0, centre - spread), min(1.0, centre + spread))
 
 
-async def _one_match(loadouts, match_format, seed: int, latency: dict[str, float]) -> str | None:
+async def _one_match(libraries, match_format, seed: int, latency: dict[str, float]) -> str | None:
     """Run one agent-vs-agent match and return the winner, or ``None`` for a draw."""
     host = MatchHost(
-        loadouts=loadouts,
+        libraries=libraries,
         match_format=match_format,
         match_seed=seed,
         match_id=f"ab-{seed}",
@@ -68,8 +72,13 @@ async def _one_match(loadouts, match_format, seed: int, latency: dict[str, float
     return score.winner
 
 
-def run(matches: int, latency_ms: float, round_seconds: float, rounds: int, seed: int) -> dict:
-    loadouts = {f: Loadout.load(LOADOUT_DIR / "orthodox.json") for f in FIGHTERS}
+def run(
+    matches: int, latency_ms: float, round_seconds: float, rounds: int, seed: int, library_dir: Path
+) -> dict:
+    library = {p.stem: cr.load(p) for p in sorted(library_dir.glob("*.json"))}
+    if not library:
+        raise SystemExit(f"no combinations in {library_dir}")
+    libraries = {f: library for f in FIGHTERS}
     match_format = MatchFormat(
         rounds=rounds,
         round_ticks=int(round(round_seconds * TICK_HZ)),
@@ -85,7 +94,7 @@ def run(matches: int, latency_ms: float, round_seconds: float, rounds: int, seed
         draws = 0
         for index in range(matches):
             winner = asyncio.run(
-                _one_match(loadouts, match_format, seed + index, latency)
+                _one_match(libraries, match_format, seed + index, latency)
             )
             if winner is None:
                 draws += 1
@@ -116,6 +125,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rounds", type=int, default=1)
     parser.add_argument("--round-seconds", type=float, default=20.0)
     parser.add_argument("--seed", type=int, default=1000)
+    parser.add_argument(
+        "--library", type=Path, default=COMBINATION_DIR, help="combination library directory"
+    )
     parser.add_argument("--out", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -123,7 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         f"A/B: {args.matches} matches per condition, {args.rounds} x {args.round_seconds:.0f}s, "
         f"latency {args.latency_ms:.0f} ms on red"
     )
-    results = run(args.matches, args.latency_ms, args.round_seconds, args.rounds, args.seed)
+    results = run(args.matches, args.latency_ms, args.round_seconds, args.rounds, args.seed, args.library)
 
     print("\ncondition           red wins   draws   red win rate   95% interval")
     for label, data in results.items():
