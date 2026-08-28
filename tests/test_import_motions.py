@@ -21,7 +21,7 @@ def library():
 
 
 def test_every_record_loads_and_validates(library):
-    assert len(library) == 136
+    assert len(library) == 130
 
 
 def test_names_are_unique(library):
@@ -51,3 +51,19 @@ def test_durations_match_their_recordings_within_one_token(library):
 def test_both_mirrors_are_present(library):
     mirrored = sum(1 for r in library if r.source.mirrored)
     assert mirrored == len(library) - mirrored
+
+
+def test_no_combination_carries_more_travel_than_the_ghost_can_place(library):
+    """A move recording metres of its own travel fights the placement instead of being placed.
+
+    `warp()` ramps `ghost - anchor - recorded_displacement`, so a 3.4 m recording aimed at a ghost
+    0.5 m away gets a -2.9 m residual: the ramp drags the fighter backwards while the recording
+    drives it forwards. Excluded at build time - see MAX_RECORDED_TRAVEL_M.
+    """
+    import math
+
+    from openroboxing.spec.constants import MAX_RECORDED_TRAVEL_M
+
+    for record in library:
+        travel = math.hypot(*record.recorded_displacement)
+        assert travel <= MAX_RECORDED_TRAVEL_M, f"{record.name} travels {travel:.2f} m"

@@ -89,6 +89,26 @@ across a 7-take sample spanning all three motion families, because with only
 nearby punch. See ``studio/segment.py``'s module docstring for the full argument.
 """
 
+MAX_RECORDED_TRAVEL_M: float = 1.2
+"""Furthest a combination may carry its own recorded travel before it is excluded.
+
+A combination is placed by a ghost: `runtime/warp.py` computes
+``residual = ghost - anchor - rotated_recorded_displacement`` and ramps that across the legs. So a
+move that records metres of its own travel **fights the placement** — commanded at a ghost 0.5 m away
+while recording 3.4 m, its residual is -2.9 m and the ramp drags the fighter backwards while the
+recording drives it forwards. It still lands on the ghost, but the path is incoherent. Travel is
+supplied by the placement now (`spec/intent.md` 3.0 deleted the walk approach), so a combination
+carrying its own is working against the control rather than with it.
+
+**Measured 2026-08-28**, and the value sits in a real gap rather than being chosen: sorted by
+recorded travel the 136-combination library runs ... 0.72, 0.75, 0.77, 0.78, 0.78, 0.98, then jumps
+to 1.47, 2.84, 3.08, 3.09, 3.37. The 0.49 m gap between 0.98 and 1.47 is the widest in the
+distribution, and everything above it is a `combat_turn_jog_start` run. 1.2 m sits in that gap.
+
+Note it excludes 6 combinations, not the whole jog family: two of that family's combinations travel
+only 0.78 m — the turn rather than the run — and are kept.
+"""
+
 COMBINATION_MIN_KEYFRAMES: int = 3
 COMBINATION_MAX_KEYFRAMES: int = 6
 """A combination is 3-6 keyframes. Fewer is not a combination; more runs past the duration the

@@ -71,7 +71,7 @@ Violating any of these is a design regression, not a shortcut:
 | Plan length | **the leg's recorded duration**, 6–16 tokens | forced since `spec/intent.md` 3.0 — a combination lasts as long as its recording |
 | Combination style | **`walk_boxing`** | the only clip allowing 6–16 tokens; `walk` caps at 11 |
 | Leg | **0.8–2.13 s** | `MIN_TOKENS`–`MAX_TOKENS` × 4 frames at 30 Hz |
-| Combination | **3–6 keyframes, 2.4–7.6 s** | measured over the 136-record v0.2 library, rebuilt 2026-08-28 for the D1 turning-point fix |
+| Combination | **3–6 keyframes, 2.4–7.6 s** | measured over the 130-record v0.2 library |
 | Move end | **`commit_at + duration_ticks`** | known when it starts — `spec/intent.md` 3.0 |
 | Drift gain | **0.803** | the generator covers this fraction of a commanded residual; `warp.py` divides by it |
 | Sustained walk | **0.83 m/s** | measured; validates a player's placement at issue time only |
