@@ -1,18 +1,23 @@
 /* The 3-D ring: scene from /scene.json, geometry from /meshes.bin, poses from binary frames.
  *
- * Implements spec/protocol.md 0.4. Until 0.4 the host rendered a JPEG and this file did not exist;
- * the game needs a shadow you can drive around the ring, and you cannot place a ghost in space by
- * looking at a flat video of it.
+ * Implements spec/protocol.md 0.6 (3-D rendering since 0.4). Until 0.4 the host rendered a JPEG and
+ * this file did not exist; the game needs a shadow you can drive around the ring, and you cannot
+ * place a ghost in space by looking at a flat video of it.
  *
  * Who owns what
  * -------------
  * The two real fighters are the host's: their body transforms arrive already computed, so this file
  * only copies numbers into Object3Ds and can never disagree with the simulation.
  *
- * The shadow is ours. It is posed here, from the joint angles in `welcome` and the kinematic tree in
- * the scene description, because a ghost that round-tripped to the server before it moved would be
- * unusable to aim with. That is the one piece of forward kinematics in the client, and it touches
- * nothing the simulation owns.
+ * The shadow is ours. It is posed here, from the selected combination's final-keyframe joint angles
+ * (`welcome`'s `pose`, since 0.6) and the kinematic tree in the scene description, because a ghost
+ * that round-tripped to the server before it moved would be unusable to aim with. That is the one
+ * piece of forward kinematics in the client, and it touches nothing the simulation owns.
+ *
+ * `fighterHeading` reads a second thing off the streamed transforms: the pelvis's own yaw, which is
+ * the "fighter's own heading" half of the ghost's *derived* heading (`D5` — the other half, the
+ * combination's `heading_delta`, comes from `welcome`). Not new kinematics — the same world
+ * quaternion every other body already gets, read rather than only copied.
  *
  * Quaternions arrive MuJoCo `wxyz`; three.js wants `xyzw`. `setQuat` below is the only place in the
  * client where that difference exists.
@@ -31,6 +36,11 @@ const FLOATS_PER_BODY = 7;
 const Z_TO_Y = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2);
 
 const SHADOW_COLOUR = { red: 0xff6b6b, blue: 0x6bb6ff };
+
+/* A ghost placed beyond its combination's own `reach_m` (`spec/protocol.md` 0.6 §"Feasibility"):
+ * the host will reject the commit, and the shadow says so before the player pays for it. Distinct
+ * from both seat colours so it reads as "rejected" rather than "the other seat's ghost". */
+const REJECTED_COLOUR = 0xffa53d;
 
 /* Scratch for `project`, so the render loop allocates nothing. */
 const PROJECTED = new THREE.Vector3();
@@ -121,6 +131,7 @@ export class Ring {
     this.camera.up.set(0, 0, 1);
 
     this.bodies = [];          // Object3D per streamed body, in scene.bodies order
+    this.bodyNames = [];       // scene.bodies itself, kept for fighterHeading()
     this.meshes = [];          // BufferGeometry per shipped mesh
     this.skeleton = null;      // ShadowSkeleton — shared solver, one seat at a time
     this.shadows = {};         // seat -> { root, parts }
@@ -190,6 +201,7 @@ export class Ring {
 
   _buildBodies(names) {
     this.expectedBodies = names.length;
+    this.bodyNames = names;         // kept for fighterHeading(); order matches the streamed frame
     this.bodies = names.map(() => {
       const group = new THREE.Group();
       this.scene.add(group);
@@ -319,8 +331,8 @@ export class Ring {
 
   /* A world point in the canvas's own pixel box.
    *
-   * The annotations the design asks for on top of the arena — the walk path, the anchor marker, the
-   * contact ring — are drawn in SVG over the canvas, and they have to land on the pixels the
+   * The annotations the design asks for on top of the arena — the distance path, the anchor marker,
+   * the contact ring — are drawn in SVG over the canvas, and they have to land on the pixels the
    * renderer drew to. So they go through *this* camera rather than a second guess at where the
    * camera is; if `frameRing` ever moves it, the overlay moves with it and cannot drift.
    */
@@ -359,8 +371,29 @@ export class Ring {
     }
   }
 
+  /* ---- the fighter's own heading ---------------------------------------------------------------- */
+  /* `spec/protocol.md` 0.6 / `D5`: a ghost's heading is *derived* — the fighter's own heading plus
+   * the selected combination's `heading_delta` — and is never a field the JSON carries (`position`
+   * is a bare `{x, y}`). The one place that heading exists at all is the pelvis's own streamed
+   * transform, so that is where this reads it from: the yaw of `${seat}_pelvis`'s world quaternion,
+   * by the *same* formula the host uses to read a live fighter's heading and a recorded take's
+   * heading off a quaternion (`runtime/conventions.py::quat_wxyz_to_yaw`) — this is that formula
+   * with the `wxyz` arguments relabelled to three.js's own `xyzw` quaternion fields, not a second
+   * derivation of the convention.
+   *
+   * A preview only (`spec/protocol.md` "The shadow (0.4, ghost-only since 0.6)"): the client sends
+   * nothing about heading, so an approximation that is off by the fighter's own pitch/roll costs
+   * nothing but a slightly untrue-looking ghost, never a wrong commit.
+   */
+  fighterHeading(seat) {
+    const index = this.bodyNames.indexOf(`${seat}_pelvis`);
+    if (index < 0) return 0;
+    const q = this.bodies[index].quaternion;   // three.js order: (x, y, z, w)
+    return Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
+  }
+
   /* ---- the shadow ------------------------------------------------------------------------------ */
-  showShadow(seat, x, y, heading, angles, standHeight) {
+  showShadow(seat, x, y, heading, angles, standHeight, rejected = false) {
     if (!this.skeleton || !angles) { this.hideShadow(seat); return; }
     const shadow = this.shadowFor(seat);
     this.skeleton.solve(x, y, standHeight, heading, angles);
@@ -368,6 +401,9 @@ export class Ring {
       shadow.parts[i].position.copy(this.skeleton.position[i]);
       shadow.parts[i].quaternion.copy(this.skeleton.quaternion[i]);
     }
+    /* A ghost beyond its combination's reach is drawn as rejected — the host will refuse it
+       (`spec/protocol.md` §"Feasibility") — so the colour says so before the player commits. */
+    shadow.material.color.setHex(rejected ? REJECTED_COLOUR : (SHADOW_COLOUR[seat] ?? 0xffffff));
     shadow.root.visible = true;
   }
 

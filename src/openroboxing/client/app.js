@@ -1,18 +1,27 @@
-/* OpenRoboxing player view — spec/protocol.md 0.5, spec/intent.md 1.1, spec/ui-design-guide/.
+/* OpenRoboxing player view — spec/protocol.md 0.6, spec/intent.md 3.0, spec/ui-design-guide/.
  *
- * The player's loop: pick a pose (the move's *last frame*), drive a shadow of your fighter to where
- * it should happen, commit. The generator walks you there and arrives in that pose. Up to five
- * commits stack up and run back to back; run out and the fighter stops.
+ * The player's loop: pick a combination (a recorded 3-6 keyframe sequence, shown by its *last*
+ * pose), drive a shadow of your fighter to where it should end, commit. The generator carries the
+ * fighter there and arrives in that pose. Up to five commits stack up and run back to back; run out
+ * and the fighter stops.
+ *
+ * `D6` retired the six-slot loadout: a fighter carries the whole shared ~120-combination library,
+ * and this page shows it nine at a time with prev/next paging (`GRID_SIZE`, §the picker below).
+ * `D5` retired the player-set heading a placement used to carry: a ghost's heading is now *derived*
+ * — the fighter's own heading plus the staged combination's `heading_delta` — and this file has
+ * nothing to send the host about it (`ghostHeading` computes it only to draw the shadow).
  *
  * What the client owns
  * --------------------
  * The shadow, and only the shadow. It is drawn here so aiming costs no round trip, and the host
  * never sees it — the placement is transmitted once, on commit. Everything else is still the host's:
  * this file forwards keys and draws what arrives, and it never decides whether a commit is legal
- * (`can_commit` comes from the host, so when the rule changes this file does not).
+ * (`can_commit` comes from the host, so when the rule changes this file does not). The reach check
+ * this file draws is the same hint: `reach_m` mirrors the host's own arithmetic exactly
+ * (`server/protocol.py::reach_m`), but the host is the one that actually enforces it.
  *
  * Two loops, deliberately different (spec/ui-design-guide/ §Interactions):
- *   - the ghost and the cost estimate redraw at 60 fps, locally, because they must feel like direct
+ *   - the ghost and the reach estimate redraw at 60 fps, locally, because they must feel like direct
  *     manipulation;
  *   - everything the host owns redraws on the 30 Hz `state` message, and nothing here animates as
  *     though it had 60 Hz truth.
@@ -27,26 +36,31 @@
 import { Ring } from './ring.js';
 import { drawArena, drawMap } from './overlay.js';
 
-/* Each seat gets one region of the keyboard: a row picks the pose, a cluster drives the shadow, one
-   big key commits. Movement keys are **held**, and they move the ghost in *screen* directions —
-   the camera is fixed, so up-the-screen is a fixed world direction and nobody has to think about
-   whose forward is whose. */
+/* Each seat gets one region of the keyboard: a 3x3 block picks a combination off the current page,
+   two keys turn the page, a cluster drives the shadow, one big key commits. Movement keys are
+   **held**, and they move the ghost in *screen* directions — the camera is fixed, so up-the-screen
+   is a fixed world direction and nobody has to think about whose forward is whose. */
 const SEATS = {
   red: {
-    keys: ['1', '2', '3', '4', '5', '6'],
-    keyRange: '1 — 6',
+    keys: ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
+    keyRange: '1 — 9',
+    page: { prev: '[', next: ']' },
     commit: ' ',
     clear: 'q',
     drive: { w: [0, 1], s: [0, -1], a: [-1, 0], d: [1, 0] },
   },
   blue: {
-    keys: ['u', 'i', 'o', 'j', 'k', 'l'],
-    keyRange: 'U — L',
+    keys: ['u', 'i', 'o', 'j', 'k', 'l', 'm', ',', '.'],
+    keyRange: 'U I O J K L M , .',
+    page: { prev: ';', next: "'" },
     commit: 'Enter',
     clear: 'p',
     drive: { ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] },
   },
 };
+
+/* One page of the picker: a 3x3 grid (`D6`). 120 combinations makes 14 pages, the last one short. */
+const GRID_SIZE = 9;
 
 /* How fast the ghost travels while a key is held, m/s. Fast enough to cross the ring in a couple of
    seconds, slow enough to place a punch. A UI number, not a physical one — it is how quickly you can
@@ -101,27 +115,31 @@ function shadowPosition(seat) {
   return { x, y };
 }
 
-/* Anywhere in the ring is reachable (spec/intent.md 1.1) — the fighter walks until it gets there.
-   What a distant placement costs is *time*, and time is what a player cannot take back, so the ghost
-   shows how long this commit will tie the queue up for: the walk at the measured approach speed,
-   plus the pose's own length. Measured from the **anchor**, not from where the fighter is standing:
-   the next move starts from the end of the queue. An estimate, and labelled as one. */
-function commitCost(seat, at) {
+/* Since spec/intent.md 3.0 a combination's duration is fixed by its recording, so how far its ghost
+   may sit from the anchor is a fixed **reach**, not a matter of time (1.1-2.2's "anywhere is
+   reachable, distance only costs time" is gone). `reach_m` is the same number `welcome` carried and
+   the host will check at commit (`server/protocol.py::reach_m`) — measured from the **anchor**, not
+   from where the fighter is standing, because the next move starts from the end of the queue.
+   `rejected` mirrors what the host will do; it is a hint, never the decision. */
+function reachInfo(seat, at) {
   const entry = state[seat];
   if (!entry?.anchor || !entry.staged) return null;
-  const pose = entry.poseSeconds?.[entry.staged];
-  const speed = entry.approachSpeed;
-  if (!pose || !speed) return null;
+  const combo = entry.combinationsByName[entry.staged];
+  if (!combo) return null;
   const metres = Math.hypot(at.x - entry.anchor.x, at.y - entry.anchor.y);
-  return { metres, walk: metres / speed, throw: pose, total: metres / speed + pose };
+  return { metres, reach: combo.reach_m, seconds: combo.seconds, rejected: metres > combo.reach_m };
 }
 
-/* Heading is not a control: the ghost always faces the opponent from wherever it stands. One fewer
-   key, and it is what a player wants every time bar none. */
-function shadowHeading(seat, at) {
-  const opponent = state[seat]?.opponentPosition;
-  if (!opponent) return state[seat]?.anchor?.heading ?? 0;
-  return Math.atan2(opponent.y - at.y, opponent.x - at.x);
+/* Heading is not a control (`D5`, spec/protocol.md 0.6 §"The shadow"): the ghost's heading is
+   *derived* — the fighter's own current heading (read off the streamed pelvis transform, since the
+   JSON carries no heading field any more) plus the staged combination's own recorded turn. A
+   combination can turn by up to 158°, and a ghost that instead faced the opponent would discard
+   the turn that *is* the motion. Nothing here is sent to the host — this is a preview only. */
+function ghostHeading(seat) {
+  const entry = state[seat];
+  const combo = entry?.staged ? entry.combinationsByName[entry.staged] : null;
+  if (!combo) return 0;
+  return ring.fighterHeading(seat) + combo.heading_delta;
 }
 
 /* One 60 fps pass: move every ghost, redraw its cost, and hand the annotation layer what it needs.
@@ -146,13 +164,15 @@ function driveShadows(dt) {
     }
 
     const at = shadowPosition(seat);
-    const angles = entry.poses?.[entry.staged];
-    if (!at || !entry.staged || !angles) { ring.hideShadow(seat); drawCost(seat, null); continue; }
+    const combo = entry.staged ? entry.combinationsByName[entry.staged] : null;
+    if (!at || !combo) { ring.hideShadow(seat); drawReach(seat, null); continue; }
 
-    ring.showShadow(seat, at.x, at.y, shadowHeading(seat, at), angles, standHeight);
-    const cost = commitCost(seat, at);
-    drawCost(seat, cost);
-    if (cost) plans.push({ seat, anchor: entry.anchor, ghost: at, walkM: cost.metres });
+    const reach = reachInfo(seat, at);
+    ring.showShadow(seat, at.x, at.y, ghostHeading(seat), combo.pose, standHeight, reach?.rejected);
+    drawReach(seat, reach);
+    if (reach) {
+      plans.push({ seat, anchor: entry.anchor, ghost: at, metres: reach.metres, rejected: reach.rejected });
+    }
   }
 
   const view = { seats: visibleSeats(), plans };
@@ -174,18 +194,24 @@ function visibleSeats() {
   return seats;
 }
 
-/* ---- the cost of this commit -----------------------------------------------------------------------
-   The most important block on the page: it says what a placement will tie the fighter up for, while
-   the player can still change their mind. */
-function drawCost(seat, cost) {
+/* ---- duration and reach of the staged combination -------------------------------------------------
+   The most important block on the page: it says what a commit will tie the fighter up for, and
+   whether the ghost is somewhere this combination can actually reach, while the player can still
+   change their mind. Since spec/intent.md 3.0 a combination starts where the fighter stands and has
+   no walk to add — its own duration is the whole cost, and how far it can be placed is a fixed
+   reach rather than a matter of time. */
+function drawReach(seat, info) {
   const block = document.getElementById(`cost-${seat}`);
   const value = document.getElementById(`cost-value-${seat}`);
   const sub = document.getElementById(`cost-sub-${seat}`);
   const bar = document.getElementById(`cost-bar-${seat}`);
+  const fill = document.getElementById(`cost-reach-fill-${seat}`);
   const split = document.getElementById(`cost-split-${seat}`);
+  const text = document.getElementById(`cost-reach-text-${seat}`);
   if (!block) return;
 
-  if (!cost) {
+  if (!info) {
+    block.classList.remove('rejected');
     block.classList.add('idle');
     value.textContent = '—';
     sub.innerHTML = 'nothing<br>staged';
@@ -195,64 +221,109 @@ function drawCost(seat, cost) {
   }
 
   block.classList.remove('idle');
-  value.textContent = `~${cost.total.toFixed(1)} s`;
-  sub.innerHTML = 'to walk<br>and throw';
+  block.classList.toggle('rejected', info.rejected);
+  value.textContent = `${info.seconds.toFixed(2)} s`;
+  sub.innerHTML = 'combination<br>duration';
   bar.hidden = false;
   split.hidden = false;
 
-  const walkShare = (cost.walk / cost.total) * 100;
-  document.getElementById(`cost-walk-${seat}`).style.width = `${walkShare.toFixed(1)}%`;
-  document.getElementById(`cost-throw-${seat}`).style.width = `${(100 - walkShare).toFixed(1)}%`;
-  document.getElementById(`cost-walk-text-${seat}`).textContent = `${cost.walk.toFixed(1)} s walk`;
-  document.getElementById(`cost-throw-text-${seat}`).textContent = `${cost.throw.toFixed(1)} s throw`;
+  const share = Math.min(100, (info.metres / info.reach) * 100);
+  fill.style.width = `${share.toFixed(1)}%`;
+  fill.classList.toggle('over', info.rejected);
+  text.textContent = info.rejected
+    ? `${info.metres.toFixed(2)} m — beyond its ${info.reach.toFixed(2)} m reach`
+    : `${info.metres.toFixed(2)} m of ${info.reach.toFixed(2)} m reach`;
 }
 
-/* ---- the loadout bar ------------------------------------------------------------------------------ */
-function buildLoadout(seat) {
-  const bar = document.getElementById(`loadout-${seat}`);
+/* ---- the picker: nine combinations at a time, paged (`D6`) -----------------------------------------
+ * `welcome`'s `combinations` is the whole shared library, sorted by name (`spec/protocol.md` 0.6) —
+ * there is no per-seat loadout left to page through, both fighters see the identical list. `page`
+ * indexes it in `GRID_SIZE`-sized slices; the grid is rebuilt on every selection and page turn (nine
+ * DOM nodes, never on the 60 fps loop) so the `staged` highlight and the page indicator are always
+ * current without a round trip.
+ */
+function totalPages(entry) {
+  return Math.max(1, Math.ceil(entry.combinations.length / GRID_SIZE));
+}
+
+function buildGrid(seat) {
+  const grid = document.getElementById(`loadout-${seat}`);
   const config = SEATS[seat];
   const entry = state[seat];
-  bar.innerHTML = '';
+  grid.innerHTML = '';
 
-  entry.slots.forEach((slot, index) => {
+  const start = entry.page * GRID_SIZE;
+  for (let i = 0; i < GRID_SIZE; i += 1) {
+    const combo = entry.combinations[start + i];
     const cell = document.createElement('div');
     cell.className = 'slot';
-    cell.id = `slot-${seat}-${slot}`;
 
     const key = document.createElement('span');
     key.className = 'key';
-    key.textContent = config.keys[index].toUpperCase();
 
     const name = document.createElement('span');
     name.className = 'name';
-    name.textContent = entry.loadout[slot];
 
-    /* The pose's own length — the strike, once the fighter has walked there. The walk is not in it,
-       because the walk depends on where the ghost is standing; the cost block adds that live. */
     const duration = document.createElement('span');
     duration.className = 'dur';
-    const seconds = entry.poseSeconds?.[slot];
-    duration.textContent = seconds ? `${seconds.toFixed(2)} s` : '';
+
+    if (combo) {
+      key.textContent = config.keys[i].toUpperCase();
+      cell.classList.toggle('staged', entry.staged === combo.name);
+      name.textContent = combo.name;
+      duration.textContent = `${combo.seconds.toFixed(2)} s`;
+      cell.addEventListener('click', () => selectCombination(seat, combo.name));
+    } else {
+      key.textContent = '·';         // past the end of the library on the last page — no key here
+      cell.classList.add('empty');
+    }
 
     cell.append(key, name, duration);
-    bar.append(cell);
-  });
+    grid.append(cell);
+  }
+
+  const pages = totalPages(entry);
+  document.getElementById(`page-indicator-${seat}`).textContent = `${entry.page + 1} / ${pages}`;
 }
 
-/* A seat this page does not hold. The host sends no loadout for somebody else's fighter, and this
-   draws that as withheld rather than as empty. */
-function buildRemoteLoadout(seat) {
-  const bar = document.getElementById(`loadout-${seat}`);
-  if (bar.dataset.remote === 'yes') return;
-  bar.dataset.remote = 'yes';
-  bar.innerHTML = '';
-  for (let i = 0; i < 6; i += 1) {
+/* Stage a combination by name — from a keypress or a click, the two ways a cell can be chosen.
+   Nothing is sent to the host here: `spec/protocol.md` 0.6 collapsed staging and placement into one
+   `intent` message, sent once at commit (`commit()` below), so there is nothing to stage remotely
+   until then. */
+function selectCombination(seat, name) {
+  const entry = state[seat];
+  if (!entry || !entry.combinationsByName[name]) return;
+  entry.staged = name;
+  buildGrid(seat);
+}
+
+/* Turn the page, wrapping — 14 pages of 120 is short enough that wrapping beats a dead end at
+   either edge. */
+function changePage(seat, delta) {
+  const entry = state[seat];
+  if (!entry || !entry.combinations.length) return;
+  const pages = totalPages(entry);
+  entry.page = (entry.page + delta + pages) % pages;
+  buildGrid(seat);
+}
+
+/* A seat this page does not hold — an agent, or a second machine (`spec/protocol.md` §Hotseat). Not
+   privacy any more (`D6` retired the per-seat loadout that made 0.4-0.5's private grid meaningful:
+   the library is shared and not secret) — this page simply never received a `welcome` for that seat,
+   so it has no combinations to show and no ghost to draw. */
+function buildRemoteGrid(seat) {
+  const grid = document.getElementById(`loadout-${seat}`);
+  if (grid.dataset.remote === 'yes') return;
+  grid.dataset.remote = 'yes';
+  grid.innerHTML = '';
+  for (let i = 0; i < GRID_SIZE; i += 1) {
     const cell = document.createElement('div');
-    cell.className = 'slot private';
-    cell.innerHTML = '<span class="key">·</span><span class="name">private</span><span class="dur"></span>';
-    bar.append(cell);
+    cell.className = 'slot empty';
+    cell.innerHTML = '<span class="key">·</span><span class="name"></span><span class="dur"></span>';
+    grid.append(cell);
   }
-  document.getElementById(`loadout-note-${seat}`).textContent = 'no loadout · no ghost';
+  document.getElementById(`loadout-note-${seat}`).textContent = 'not this keyboard';
+  document.getElementById(`page-indicator-${seat}`).textContent = '— / —';
 }
 
 /* ---- applying host state ----------------------------------------------------------------------------
@@ -262,11 +333,7 @@ function applyState(message, viewer) {
   lastState[viewer] = message;
   const entry = state[viewer];
   const own = message.seats?.[viewer];
-  if (entry && own) {
-    entry.anchor = own.anchor;
-    const other = Object.keys(message.seats).find((name) => name !== viewer);
-    if (other) entry.opponentPosition = message.seats[other].position;
-  }
+  if (entry && own) entry.anchor = own.anchor;
   render();
 }
 
@@ -321,7 +388,7 @@ function drawSeat(seat, source, { full, remote }) {
   panel.classList.toggle('locked', !remote && !source.can_commit);
 
   if (remote) {
-    buildRemoteLoadout(seat);
+    buildRemoteGrid(seat);
     drawQueue(seat, source.queue || [], { full: false, remote: true });
     document.getElementById(`queue-head-${seat}`).textContent = 'queue · private · no cancellation';
     const left = document.getElementById(`queue-left-${seat}`);
@@ -336,13 +403,7 @@ function drawSeat(seat, source, { full, remote }) {
   document.getElementById(`loadout-note-${seat}`).textContent =
     source.can_commit ? SEATS[seat].keyRange : 'locked — queue full';
 
-  if (entry) {
-    entry.canCommit = source.can_commit;
-    entry.slots.forEach((slot) => {
-      const cell = document.getElementById(`slot-${seat}-${slot}`);
-      if (cell) cell.classList.toggle('staged', entry.staged === slot);
-    });
-  }
+  if (entry) entry.canCommit = source.can_commit;
 
   const queue = source.queue || [];
   const depth = full ? (source.queue_depth ?? queue.length) : queue.length;
@@ -357,10 +418,10 @@ function drawSeat(seat, source, { full, remote }) {
 
 /* The queue is the new HUD: what you have paid for and cannot take back. Five rows, always drawn.
  *
- * `commit_at`, `strike_at` and `end_tick` are null until the move reaches each stage, and null means
- * *not yet* — never zero, never "already over". Only the walking row prints a timing, because it is
- * the only one where "not yet" says something: a fighter crossing the ring for four seconds must not
- * read as idle. */
+ * `commit_at` and `end_tick` are null until the commit becomes current, and null means *not yet* —
+ * never zero, never "already over". Unlike 0.5 there is no separate `strike_at` / `approaching` any
+ * more: spec/intent.md 3.0 deleted the walk-then-throw phase they told apart, so a commit is simply
+ * not started, running (`executing`), or finished. */
 function drawQueue(seat, queue, { full, remote }) {
   const list = document.getElementById(`queue-${seat}`);
   if (!list) return;
@@ -375,21 +436,13 @@ function drawQueue(seat, queue, { full, remote }) {
     label.className = 'state';
 
     if (commit) {
-      const walking = commit.executing && commit.approaching;
-      row.classList.add(walking ? 'walking' : commit.executing ? 'striking' : 'waiting');
-      label.textContent = walking ? 'walking' : commit.executing ? 'striking' : 'waiting';
+      row.classList.add(commit.executing ? 'striking' : 'waiting');
+      label.textContent = commit.executing ? 'running' : 'waiting';
 
       const pose = document.createElement('span');
       pose.className = 'pose';
-      pose.textContent = commit.pose;
+      pose.textContent = commit.combination;
       row.append(label, pose);
-
-      if (walking) {
-        const timing = document.createElement('span');
-        timing.className = 'timing';
-        timing.textContent = 'arrives —';
-        row.append(timing);
-      }
     } else if (remote) {
       /* Not ours, not executing: paid for or not, the host will not say — and neither will this. */
       row.classList.add('private');
@@ -513,9 +566,8 @@ function connect(seat) {
   socket.binaryType = 'arraybuffer';
 
   state[seat] = {
-    socket, slots: [], loadout: {}, poses: {},
-    staged: null, anchor: null, opponentPosition: null,
-    poseSeconds: {}, approachSpeed: null,
+    socket, combinations: [], combinationsByName: {}, page: 0,
+    staged: null, anchor: null,
     offset: { x: 0, y: 0 }, canCommit: true,
     joined: false, remote: false, dropped: false,
   };
@@ -539,18 +591,21 @@ function connect(seat) {
 
     const message = JSON.parse(raw.data);
     switch (message.type) {
-      case 'welcome':
-        state[seat].joined = true;
-        state[seat].loadout = message.loadout;
-        state[seat].poseSeconds = message.pose_seconds || {};
-        state[seat].approachSpeed = message.approach_speed_m_s || null;
-        state[seat].poses = message.poses || {};
-        state[seat].slots = Object.keys(message.loadout).sort();
+      case 'welcome': {
+        const entry = state[seat];
+        entry.joined = true;
+        // Already sorted by name (spec/protocol.md 0.6), but sorting again costs nothing and
+        // guards against a future host that forgets to.
+        entry.combinations = [...(message.combinations || [])].sort((a, b) =>
+          a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+        entry.combinationsByName = Object.fromEntries(entry.combinations.map((c) => [c.name, c]));
+        entry.page = 0;
         rounds = message.format?.rounds ?? rounds;
         getUpSeconds = Math.round((message.format?.get_up_window_ticks ?? 400) / TICK_HZ);
-        buildLoadout(seat);
+        buildGrid(seat);
         statusLine.innerHTML = `<span class="status-dot ok"></span>connected · ${message.match_id}`;
         break;
+      }
       case 'state':
         applyState(message, seat);
         break;
@@ -599,9 +654,11 @@ function showError(seat, message) {
 }
 
 /* ---- committing ---------------------------------------------------------------------------------------
- * The one moment the host learns where the ghost was. Place then commit, in that order and in one
- * batch, so the host applies both on the same intent tick and the commit cannot land against a stale
- * placement.
+ * The one moment the host learns anything: `spec/protocol.md` 0.6 collapsed 0.4's separate `stage`
+ * (which slot) and `place` (where, with a player-set heading) into one `intent` message — a
+ * combination has no slot to name and its ghost carries no heading (`D5`/`D6`), so there is exactly
+ * one thing left to stage. Sent immediately before `commit`, in the same batch, so the host applies
+ * both on the same intent tick and the commit cannot land against a stale placement.
  */
 function commit(seat) {
   const entry = state[seat];
@@ -609,7 +666,7 @@ function commit(seat) {
   if (!entry || !entry.staged || !at) return;
 
   entry.socket.send(JSON.stringify({
-    type: 'place', x: at.x, y: at.y, heading: shadowHeading(seat, at),
+    type: 'intent', combination: entry.staged, ghost: [at.x, at.y],
   }));
   entry.socket.send(JSON.stringify({ type: 'commit' }));
   entry.offset = { x: 0, y: 0 };   // the next move starts from the new anchor
@@ -631,12 +688,21 @@ document.addEventListener('keydown', (raw) => {
       raw.preventDefault();
       return;
     }
+    if (pressed === config.page.prev) {
+      changePage(seat, -1);
+      raw.preventDefault();
+      return;
+    }
+    if (pressed === config.page.next) {
+      changePage(seat, 1);
+      raw.preventDefault();
+      return;
+    }
 
     const index = config.keys.indexOf(pressed);
-    if (index >= 0 && index < entry.slots.length) {
-      entry.staged = entry.slots[index];
-      entry.socket.send(JSON.stringify({ type: 'stage', slot: entry.staged }));
-      render();
+    if (index >= 0) {
+      const combo = entry.combinations[entry.page * GRID_SIZE + index];
+      if (combo) selectCombination(seat, combo.name);
       raw.preventDefault();
       return;
     }
@@ -649,12 +715,21 @@ document.addEventListener('keydown', (raw) => {
       entry.staged = null;
       entry.offset = { x: 0, y: 0 };
       entry.socket.send(JSON.stringify({ type: 'clear' }));
-      render();
+      buildGrid(seat);
       raw.preventDefault();
       return;
     }
   }
 });
+
+/* The page buttons do exactly what the page keys do — a click and a keypress are the same input,
+   just from a different device (spec/ui-design-guide/ keeps the fight itself keyboard-only, but
+   these sit beside the grid rather than in it, so a mouse reaching for them mid-round steals
+   nothing). */
+for (const seat of Object.keys(SEATS)) {
+  document.getElementById(`page-prev-${seat}`).addEventListener('click', () => changePage(seat, -1));
+  document.getElementById(`page-next-${seat}`).addEventListener('click', () => changePage(seat, 1));
+}
 
 document.addEventListener('keyup', (raw) => {
   const released = raw.key.length === 1 ? raw.key.toLowerCase() : raw.key;

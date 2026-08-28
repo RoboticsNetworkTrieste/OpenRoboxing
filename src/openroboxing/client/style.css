@@ -415,6 +415,8 @@ canvas#ring {
 }
 .loadout-col, .queue-col { display: flex; flex-direction: column; min-width: 0; }
 
+/* 3 x 3, nine at a time (`D6`): the same `repeat(3, 1fr)` the six-slot loadout used, which happens
+   to be exactly the grid a nine-cell page needs — three rows instead of two, nothing else differs. */
 .loadout { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
 .slot {
   position: relative;
@@ -447,13 +449,16 @@ canvas#ring {
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
-/* A seat this page does not hold has no loadout: the host never sends one for somebody else's
-   fighter. Hatched, so it reads as withheld rather than as six empty slots. */
-.slot.private {
+/* An empty cell: either the last page of the library running short of nine, or a seat this page
+   does not hold at all (an agent, or a second machine — `spec/protocol.md` 0.6's `D6` retired the
+   old per-seat loadout, so a remote seat's grid is empty because this browser was never sent it,
+   never because the library is secret). Hatched, so it reads as nothing-here rather than a blank
+   the eye has to double back on. */
+.slot.empty {
   background: repeating-linear-gradient(45deg, var(--surface-glass) 0 5px, transparent 5px 10px);
 }
-.slot.private .name { color: var(--text-muted); }
-.slot.private .key { color: var(--text-muted); }
+.slot.empty .name { color: var(--text-muted); }
+.slot.empty .key { color: var(--text-muted); }
 
 .slot.staged {
   border: var(--border-line) solid var(--accent);
@@ -475,9 +480,47 @@ canvas#ring {
   border-radius: var(--radius-sm);
 }
 
-/* ---- cost of this commit -------------------------------------------------------------------------
-   Under a queue you cannot take back, how long you are tying the fighter up for is the decision.
-   Computed here at 60 fps from the anchor, never round-tripped. */
+/* Paging through the 120-combination library, nine at a time (`D6`). Sits directly under the grid
+   it pages; the indicator is the same reference the checklist uses ("3 / 14"). */
+.loadout-paging {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-top: 8px;
+}
+.page-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: var(--surface-3);
+  border: var(--border-hairline) solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: 5px 9px;
+  cursor: pointer;
+}
+.page-btn:hover { color: var(--text-strong); border-color: var(--accent); }
+.page-btn:active { background: var(--accent-quiet); color: var(--text-accent); }
+.page-btn .key-chip { padding: 2px 6px; font-size: var(--text-4xs); }
+.page-indicator {
+  font-family: var(--font-mono);
+  font-size: var(--text-3xs);
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .05em;
+}
+
+/* ---- duration and reach of the staged combination -------------------------------------------------
+   Under a queue you cannot take back, how long you are tying the fighter up for is the decision —
+   and since `spec/intent.md` 3.0 there is no walk to add: a combination's duration is fixed by its
+   recording, so how far its ghost may sit from the anchor is a fixed reach, not time. Computed here
+   at 60 fps from the anchor, never round-tripped; re-read from the selected combination on every
+   page turn, because both differ move to move. */
 .cost {
   border: var(--border-hairline) solid var(--border-accent);
   border-top: var(--border-line) solid var(--accent);
@@ -491,6 +534,13 @@ canvas#ring {
   border: var(--border-hairline) solid var(--border-subtle);
   background: var(--surface-glass);
 }
+/* A ghost placed beyond the staged combination's own `reach_m`: the host will reject the commit,
+   and this says so before the player pays for it. */
+.cost.rejected {
+  border: var(--border-hairline) solid var(--status-danger);
+  border-top: var(--border-line) solid var(--status-danger);
+  background: var(--status-danger-quiet);
+}
 .cost-label {
   font-family: var(--font-mono);
   font-size: var(--text-4xs);
@@ -499,6 +549,7 @@ canvas#ring {
   color: var(--text-accent);
 }
 .cost.idle .cost-label { color: var(--text-muted); }
+.cost.rejected .cost-label { color: var(--status-danger-quiet-fg); }
 .cost-figure { display: flex; align-items: baseline; gap: 10px; margin-top: 6px; }
 .cost-value {
   font-family: var(--font-display);
@@ -510,12 +561,14 @@ canvas#ring {
   line-height: 1;
 }
 .cost.idle .cost-value { color: var(--text-muted); }
+.cost.rejected .cost-value { color: var(--status-danger-quiet-fg); }
 .cost-sub { font-size: var(--text-2xs); color: var(--text-body); }
 .cost.idle .cost-sub { color: var(--text-muted); }
+.cost.rejected .cost-sub { color: var(--status-danger-quiet-fg); }
 
-.cost-bar { height: 7px; margin-top: 10px; gap: 2px; }
-.cost-bar .fill-walk { background: var(--accent); opacity: .45; }
-.cost-bar .fill-throw { background: var(--accent); }
+.cost-bar { height: 7px; margin-top: 10px; }
+.cost-bar .fill-reach { background: var(--accent); transition: background var(--dur-fast) var(--ease-standard); }
+.cost-bar .fill-reach.over { background: var(--status-danger); }
 .cost-split {
   display: flex;
   justify-content: space-between;
@@ -527,6 +580,7 @@ canvas#ring {
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
+.cost.rejected .cost-split { color: var(--status-danger-quiet-fg); }
 
 /* An error is the server's own sentence, verbatim. It never steals focus and never blocks the
    fight. */
@@ -571,23 +625,12 @@ canvas#ring {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.qrow .timing {
-  margin-left: auto;
-  font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
 
 .qrow.waiting { border: var(--border-hairline) solid var(--border-strong); background: var(--surface-3); }
 .qrow.waiting .state { color: var(--text-secondary); }
 
-/* Walking is the state most worth drawing: the move has started and the punch has not been thrown. */
-.qrow.walking { border: var(--border-line) solid var(--accent); background: var(--accent-quiet); }
-.qrow.walking .state { color: var(--text-accent); }
-.qrow.walking .pose { color: var(--text-strong); }
-
+/* spec/intent.md 3.0 deleted the walk-then-throw phase a commit used to move through, so a queue
+   row is only ever waiting or running — no separate "walking" state to draw any more. */
 .qrow.striking { border: var(--border-line) solid var(--border-strong); }
 .qrow.striking .pose { color: var(--text-strong); }
 #seat-red .qrow.striking { border-color: var(--status-danger); background: var(--status-danger-quiet); }

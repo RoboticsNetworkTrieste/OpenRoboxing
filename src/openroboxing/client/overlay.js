@@ -1,7 +1,8 @@
 /* The two drawings the three.js renderer does not do (spec/ui-design-guide/, screen 01).
  *
- *  - `drawArena` annotates the arena canvas: the dashed walk path from the anchor to the ghost, the
- *    anchor marker, the contact ring around each fighter, the walk distance, the ghost callout. It
+ *  - `drawArena` annotates the arena canvas: the dashed distance path from the anchor to the ghost
+ *    (red when the ghost is beyond the staged combination's `reach_m`), the anchor marker, the
+ *    contact ring around each fighter, the distance figure, the ghost callout. It
  *    is SVG over the canvas rather than geometry in the scene, so the renderer stays exactly what it
  *    was — the host's meshes, the host's transforms — and the annotation layer can be redrawn at
  *    60 fps without touching it. Every point goes through `ring.project`, i.e. the renderer's own
@@ -51,19 +52,21 @@ function contactRing(ring, at, colour) {
 
 /* What a fighter is doing, in the words the queue uses. Sourced only from the entries the host was
    willing to send for that seat — of an opponent that is the executing commit and nothing else, so
-   this can say "walking" without ever leaking what is queued behind it. */
+   this can say "striking" without ever leaking what is queued behind it. spec/intent.md 3.0 deleted
+   the walk-then-throw phase a commit used to move through (there is no `approaching` field left to
+   read), so a fighter is only ever down, idle, or mid-combination. */
 function fighterState(seat) {
   const executing = (seat.queue || []).find((entry) => entry.executing);
   if (seat.down) return 'down';
   if (!executing) return 'idle';
-  return executing.approaching ? 'walking' : 'striking';
+  return 'striking';
 }
 
 /**
  * @param svg   the <svg> laid over the canvas; its viewBox is kept at the canvas's pixel box
  * @param ring  the Ring, for `project`
  * @param view  {seats, plans}: `seats` is the host's seat map, `plans` is one entry per seat whose
- *              ghost is currently placed — {seat, anchor, ghost, walkM}
+ *              ghost is currently placed — {seat, anchor, ghost, metres, rejected}
  */
 export function drawArena(svg, ring, view) {
   const box = svg.getBoundingClientRect();
@@ -96,12 +99,16 @@ export function drawArena(svg, ring, view) {
 
   for (const plan of view.plans || []) {
     const colour = SEAT_COLOUR[plan.seat] || 'var(--accent)';
+    /* A ghost beyond the staged combination's own reach is drawn as rejected — the host will refuse
+       the commit (`spec/protocol.md` §"Feasibility") — in the same warning colour the shadow itself
+       and the duration/reach block turn. */
+    const pathColour = plan.rejected ? 'var(--status-danger)' : 'var(--accent)';
     const from = ring.project(plan.anchor.x, plan.anchor.y, 0.02);
     const to = ring.project(plan.ghost.x, plan.ghost.y, 0.02);
 
     parts.push(
       `<path d="M${from.x.toFixed(1)} ${from.y.toFixed(1)} L${to.x.toFixed(1)} ${to.y.toFixed(1)}"
-        stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="7 6" marker-end="url(#ov-arrow)"
+        stroke="${pathColour}" stroke-width="1.5" stroke-dasharray="7 6" marker-end="url(#ov-arrow)"
         opacity=".85" fill="none"></path>`,
       `<rect x="${(from.x - 7).toFixed(1)}" y="${(from.y - 7).toFixed(1)}" width="14" height="14"
         fill="none" stroke="${colour}" stroke-width="1.5"
@@ -113,10 +120,10 @@ export function drawArena(svg, ring, view) {
        ring is a handful of pixels and a metre at the camera is a hundred. */
     const spread = Math.hypot(to.x - from.x, to.y - from.y);
 
-    /* The walk, in metres, on an opaque backing so it stays readable over a fighter. Sat a third of
-       the way along the path — the anchor end, away from the ghost — and pushed clear of the line
-       itself along the normal, so it never sits on the path it is measuring. Suppressed when the
-       ghost is on its anchor: "0.00 m walk" is noise. */
+    /* The distance, in metres, on an opaque backing so it stays readable over a fighter. Sat a
+       third of the way along the path — the anchor end, away from the ghost — and pushed clear of
+       the line itself along the normal, so it never sits on the path it is measuring. Suppressed
+       when the ghost is on its anchor: "0.00 m" is noise. */
     if (spread > 34) {
       const normalX = -(to.y - from.y) / spread;
       const normalY = (to.x - from.x) / spread;
@@ -127,13 +134,14 @@ export function drawArena(svg, ring, view) {
         `<rect x="${(labelX - 44).toFixed(1)}" y="${(labelY - 13).toFixed(1)}" width="88"
           height="18" rx="2" fill="var(--bg-page-deep)"></rect>`,
         `<text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="middle"
-          fill="var(--text-accent)" font-family="var(--font-mono)" font-size="11" letter-spacing="1"
-         >${plan.walkM.toFixed(2)} m walk</text>`,
+          fill="${plan.rejected ? 'var(--status-danger)' : 'var(--text-accent)'}"
+          font-family="var(--font-mono)" font-size="11" letter-spacing="1"
+         >${plan.metres.toFixed(2)} m${plan.rejected ? ' · rejected' : ''}</text>`,
       );
     }
 
     /* The ghost callout: three lines naming what the ghost is. It is a teaching label, so it gives
-       way to the walk figure whenever the two are anywhere near each other — the figure is the
+       way to the distance figure whenever the two are anywhere near each other — the figure is the
        number the player is deciding on, and the callout is the thing they know by round two. */
     if (spread <= 120) continue;
     const right = to.x < width - 190;
@@ -152,7 +160,7 @@ export function drawArena(svg, ring, view) {
         letter-spacing="1.1">end pose</text>`,
       `<text x="${textX.toFixed(1)}" y="${(to.y - 10).toFixed(1)}" text-anchor="${anchorAttr}"
         fill="var(--text-muted)" font-family="var(--font-mono)" font-size="10"
-        letter-spacing="1.1">faces the opponent</text>`,
+        letter-spacing="1.1">heading is derived</text>`,
     );
   }
 
@@ -160,7 +168,7 @@ export function drawArena(svg, ring, view) {
 }
 
 /* The projector's version of the same layer, and the difference is the point: **no ghost, no
- * anchor, no walk path.** A spectator is never sent them, and anybody in the room can read a
+ * anchor, no distance path.** A spectator is never sent them, and anybody in the room can read a
  * projector. What is left is what is already visible in the ring — who is standing where, and how
  * far apart they are.
  */
@@ -241,15 +249,19 @@ export function drawMap(group, view, ringHalf) {
   for (const plan of view.plans || []) {
     const from = toMap(plan.anchor.x, plan.anchor.y);
     const to = toMap(plan.ghost.x, plan.ghost.y);
+    /* Rejected here means the same thing it means on the shadow and the duration/reach block: the
+       ghost is beyond the staged combination's own `reach_m`, and the host will refuse the commit. */
+    const pathColour = plan.rejected ? 'var(--status-danger)' : 'var(--accent)';
     parts.push(
       `<path d="M${from.x.toFixed(1)} ${from.y.toFixed(1)} L${to.x.toFixed(1)} ${to.y.toFixed(1)}"
-        stroke="var(--accent)" stroke-width="2.5" stroke-dasharray="9 7"
+        stroke="${pathColour}" stroke-width="2.5" stroke-dasharray="9 7"
         marker-end="url(#mmarrow)" fill="none"></path>`,
       `<rect x="${(from.x - 8).toFixed(1)}" y="${(from.y - 8).toFixed(1)}" width="16" height="16"
         fill="none" stroke="${SEAT_COLOUR[plan.seat]}" stroke-width="2"
         transform="rotate(45 ${from.x.toFixed(1)} ${from.y.toFixed(1)})"></rect>`,
-      `<circle cx="${to.x.toFixed(1)}" cy="${to.y.toFixed(1)}" r="17" fill="var(--accent-quiet)"
-        stroke="var(--accent)" stroke-width="2.5" stroke-dasharray="6 5"></circle>`,
+      `<circle cx="${to.x.toFixed(1)}" cy="${to.y.toFixed(1)}" r="17"
+        fill="${plan.rejected ? 'var(--status-danger-quiet)' : 'var(--accent-quiet)'}"
+        stroke="${pathColour}" stroke-width="2.5" stroke-dasharray="6 5"></circle>`,
     );
   }
 

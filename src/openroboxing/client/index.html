@@ -38,7 +38,7 @@
 
   <!-- ── The arena. The three.js canvas is inherited, not redesigned: the host streams body
        transforms and this browser draws the G1 meshes (spec/protocol.md 0.4). Everything the
-       overlay adds on top — the walk path, the anchor, the contact ring — is drawn in SVG from
+       overlay adds on top — the distance path, the anchor, the contact ring — is drawn in SVG from
        projected world coordinates, so it can never disagree with what the renderer drew. -->
   <section class="card arena torc-hud">
     <div class="plate-label">
@@ -170,26 +170,36 @@
     <div class="seat-grid">
       <div class="loadout-col">
         <div class="col-head">
-          <span class="torc-hud-label">loadout · 6 slots</span>
-          <span class="torc-hud-label push" id="loadout-note-red">1 — 6</span>
+          <span class="torc-hud-label">combinations</span>
+          <span class="torc-hud-label push" id="loadout-note-red">1 — 9</span>
         </div>
         <div class="loadout" id="loadout-red"></div>
+        <div class="loadout-paging">
+          <button class="page-btn" id="page-prev-red" type="button" aria-label="previous page">
+            <span class="key-chip">[</span><span>prev</span>
+          </button>
+          <span class="page-indicator" id="page-indicator-red">1 / 1</span>
+          <button class="page-btn" id="page-next-red" type="button" aria-label="next page">
+            <span>next</span><span class="key-chip">]</span>
+          </button>
+        </div>
       </div>
 
       <!-- The most important block on the page: what this commit costs in time you cannot take
-           back. Recomputed locally at 60 fps as the ghost moves. -->
+           back, and how far the ghost may sit from the anchor and still be reached. Recomputed
+           locally at 60 fps as the ghost moves; re-read from the selected combination on every
+           page turn, since both differ move to move. -->
       <div class="cost" id="cost-red">
-        <span class="cost-label">cost of this commit</span>
+        <span class="cost-label">duration · reach</span>
         <div class="cost-figure">
           <span class="cost-value" id="cost-value-red">—</span>
           <span class="cost-sub" id="cost-sub-red">nothing<br>staged</span>
         </div>
         <div class="bar cost-bar" id="cost-bar-red" hidden>
-          <span class="fill-walk" id="cost-walk-red"></span>
-          <span class="fill-throw" id="cost-throw-red"></span>
+          <span class="fill-reach" id="cost-reach-fill-red"></span>
         </div>
         <div class="cost-split" id="cost-split-red" hidden>
-          <span id="cost-walk-text-red">— s walk</span><span id="cost-throw-text-red">— s throw</span>
+          <span id="cost-reach-text-red">— m of — m reach</span>
         </div>
         <div class="alert alert-danger" id="error-red" hidden></div>
       </div>
@@ -222,24 +232,32 @@
     <div class="seat-grid">
       <div class="loadout-col">
         <div class="col-head">
-          <span class="torc-hud-label">loadout · 6 slots</span>
-          <span class="torc-hud-label push" id="loadout-note-blue">U I O J K L</span>
+          <span class="torc-hud-label">combinations</span>
+          <span class="torc-hud-label push" id="loadout-note-blue">U I O J K L M , .</span>
         </div>
         <div class="loadout" id="loadout-blue"></div>
+        <div class="loadout-paging">
+          <button class="page-btn" id="page-prev-blue" type="button" aria-label="previous page">
+            <span class="key-chip">;</span><span>prev</span>
+          </button>
+          <span class="page-indicator" id="page-indicator-blue">1 / 1</span>
+          <button class="page-btn" id="page-next-blue" type="button" aria-label="next page">
+            <span>next</span><span class="key-chip">'</span>
+          </button>
+        </div>
       </div>
 
       <div class="cost" id="cost-blue">
-        <span class="cost-label">cost of this commit</span>
+        <span class="cost-label">duration · reach</span>
         <div class="cost-figure">
           <span class="cost-value" id="cost-value-blue">—</span>
           <span class="cost-sub" id="cost-sub-blue">nothing<br>staged</span>
         </div>
         <div class="bar cost-bar" id="cost-bar-blue" hidden>
-          <span class="fill-walk" id="cost-walk-blue"></span>
-          <span class="fill-throw" id="cost-throw-blue"></span>
+          <span class="fill-reach" id="cost-reach-fill-blue"></span>
         </div>
         <div class="cost-split" id="cost-split-blue" hidden>
-          <span id="cost-walk-text-blue">— s walk</span><span id="cost-throw-text-blue">— s throw</span>
+          <span id="cost-reach-text-blue">— m of — m reach</span>
         </div>
         <div class="alert alert-danger" id="error-blue" hidden></div>
       </div>
@@ -258,9 +276,9 @@
 <!-- A first-time player at a meetup gets no tutorial. This line is the tutorial. -->
 <div class="teach">
   <span class="torc-kicker">first fight</span>
-  <p>Pick the pose your move ends in, drive your ghost to the spot in the ring where it should
-    happen, then commit — your fighter walks there and arrives in that pose, and the walk is time you
-    cannot take back.</p>
+  <p>Page through your combinations, pick one, drive your ghost to the spot in the ring where it
+    should end, then commit — your fighter performs the whole move from where it is standing and
+    arrives in that pose, and it cannot be cancelled once committed.</p>
   <span class="torc-hud-label push" id="status">connecting&hellip;</span>
 </div>
 
