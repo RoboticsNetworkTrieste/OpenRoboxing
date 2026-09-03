@@ -81,8 +81,14 @@ with the tick that frame will play at. So the runner computes the hole rather th
 
 ```
 remaining_ticks  = leg_boundary_tick - tick
-remaining_tokens = round(remaining_ticks / (SECONDS_PER_TOKEN * TICK_HZ))
+remaining_tokens = ceil(remaining_ticks / (SECONDS_PER_TOKEN * TICK_HZ))
 ```
+
+**`ceil`, not `round`, and this is load-bearing.** A plan that ends a frame or two *short* of the
+boundary leaves the play cursor clamped at the plan's final frame, and
+`get_context_mujoco_qpos` then returns four copies of it — the frozen-context failure described
+below. `ceil` guarantees the last plan always reaches at least the boundary, overshooting by at most
+3 frames, which the next leg's replan simply writes over.
 
 and asks for `remaining_tokens` instead of `leg.horizon_tokens`. The keyframe stays at its absolute
 tick; each replan fills only the shrinking hole between the new context and it. Consumed frames are
@@ -167,14 +173,53 @@ found at all, where the measured 39/48 punch-capture rate comes from), while `MI
 governs *selection* spacing (which of those become hard targets). Thinning must run after detection,
 so the punch-capture measurement is not invalidated.
 
-`MAX_LEG_FRAMES`-based densification (`densify`) relaxes: a gap longer than 64 frames is no longer
-unplannable, because Half 1 gives it an untargeted phase followed by a landing in-between. The
-constant's docstring must be rewritten — its current justification ("`MAX_TOKENS` is the longest plan
-MotionBricks can produce", so a longer gap is densified) is exactly what this design changes.
+#### A leg is no longer a plan, and three bounds must stop saying it is
 
-`COMBINATION_MIN_KEYFRAMES` / `COMBINATION_MAX_KEYFRAMES` move from **3–6 to 2–4**. The v0.2 library
-is rebuilt from the corpus in `motions/`; `MAX_RECORDED_TRAVEL_M`'s exclusion of 6 long-travel
-combinations is re-derived, not assumed to hold, because leg boundaries move.
+This is the change with the widest blast radius, and it is easy to miss. Until now
+`leg_tokens ≤ MAX_TOKENS` held **because a leg was exactly one plan**. Half 1 breaks that identity: a
+long leg is an untargeted phase *plus* a landing plan. Three places still enforce the old identity
+and would silently defeat the whole design if left alone:
+
+- `segment.leg_tokens` **raises** when a gap exceeds `MAX_LEG_FRAMES` (`segment.py:312`);
+- the same function **clamps** `chosen` to `min(MAX_TOKENS, …)` (`segment.py:319`) — this one is
+  worse than the raise, because it would quietly truncate every merged leg back to 16 tokens and the
+  library would look rebuilt while being unchanged;
+- `combination_record._validate` **rejects** `leg_tokens > MAX_TOKENS`
+  (`combination_record.py:179`).
+
+All three move to a new bound, `MAX_TARGET_LEG_TOKENS = 24` (`MAX_TARGET_LEG_FRAMES = 96` frames =
+3.2 s), which is what now caps a *leg*. `MAX_TOKENS` keeps its meaning untouched — it is the cap on a
+single **plan**, enforced at runtime in Half 1, and nothing else.
+
+`densify` therefore keeps its job but changes its threshold, from `MAX_LEG_FRAMES` (64) to
+`MAX_TARGET_LEG_FRAMES` (96). It is not removed: without a cap, measured legs reach 36 tokens (4.8 s)
+and combination duration runs past what the no-cancellation rule was sized for.
+
+`COMBINATION_MIN_KEYFRAMES` / `COMBINATION_MAX_KEYFRAMES` move from **3–6 to 2–3**, i.e. **1–2 legs**.
+Three rather than four, derived from duration rather than taste: at up to 3.2 s per leg, 2 legs is
+6.4 s and 3 legs would be 9.6 s — past the 7.6 s the library already ships and past what
+`COMBINATION_MAX_KEYFRAMES`' own docstring says the no-cancellation rule can survive
+(`docs/ASSUMPTIONS.md` §A23).
+
+The v0.2 library is rebuilt from the corpus in `motions/`; `MAX_RECORDED_TRAVEL_M`'s exclusion of 6
+long-travel combinations is re-derived, not assumed to hold, because leg boundaries move.
+
+#### Measured outcome of the thinning rule
+
+Simulated against the shipped 130-combination library (spacing rule only, no punch constraint, so a
+lower bound on what survives):
+
+| | before | after |
+|---|---|---|
+| legs | 623 | 313 |
+| median leg | 9 tokens (1.20 s) | **17 tokens (2.27 s)** |
+| leg range | 6–16 tokens | 12–36 tokens, capped to 24 by `densify` |
+| legs over `MAX_TOKENS` | 0 | **55 %** |
+| combination duration | 2.40–7.60 s | unchanged by construction |
+
+The median leg is **1.9× longer** — the owner's "longer than double", delivered. The 55 % figure is
+the number to keep in view: the untargeted-then-land path is the **majority case**, not an edge case,
+so it must be tested as a first-class path rather than as an exception.
 
 ---
 
@@ -234,8 +279,9 @@ and the `COMBINATION_MIN_KEYFRAMES`/`MAX_KEYFRAMES` bounds in the combination-re
   this design achieves the same guarantee (a leg lasts its recorded duration) by a different
   mechanism that needs no forced replan.
 - `spec/combination.md` → keyframe-count bounds, the thinning rule, the relaxed leg-length cap.
-- `spec/constants.py` → `COMBINATION_MIN_KEYFRAMES` 3→2, `COMBINATION_MAX_KEYFRAMES` 6→4,
-  new `MIN_TARGET_GAP_FRAMES` (48), `MAX_LEG_FRAMES` docstring rewritten, `DRIFT_GAIN` re-measured
+- `spec/constants.py` → `COMBINATION_MIN_KEYFRAMES` 3→2, `COMBINATION_MAX_KEYFRAMES` 6→3,
+  new `MIN_TARGET_GAP_FRAMES` (48), new `MAX_TARGET_LEG_FRAMES` (96) / `MAX_TARGET_LEG_TOKENS` (24),
+  `MAX_LEG_FRAMES` docstring rewritten to say it no longer bounds a leg, `DRIFT_GAIN` re-measured
   with a new provenance note.
 
 ## Implementation order
