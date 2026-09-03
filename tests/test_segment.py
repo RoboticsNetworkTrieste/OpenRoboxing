@@ -13,7 +13,7 @@ import pytest
 
 from openroboxing.paths import MOTIONS_DIR
 from openroboxing.spec.constants import (
-    MAX_LEG_FRAMES,
+    MAX_TARGET_LEG_FRAMES,
     MAX_TOKENS,
     MIN_KEYFRAME_GAP_FRAMES,
     MIN_TOKENS,
@@ -165,12 +165,14 @@ def test_keyframes_respect_the_minimum_gap():
     assert np.all(indices >= 0) and np.all(indices < len(qpos))
 
 
-def test_every_leg_is_plannable():
-    """Densification's contract: no gap exceeds what MotionBricks can plan in one go."""
+def test_every_leg_is_reachable():
+    """Densification's contract. Since `spec/intent.md` 3.2 a leg is no longer one plan - a long one
+    runs an untargeted phase and then a landing in-between - so the bound is the maximum *leg*,
+    `MAX_TARGET_LEG_FRAMES`, not the maximum plan."""
     for path in sorted(MOTIONS_DIR.glob("*.csv")):
         gaps = np.diff(segment.keyframe_indices(motion_import.load_take(path)))
         assert np.all(gaps >= MIN_KEYFRAME_GAP_FRAMES), path.name
-        assert np.all(gaps <= MAX_LEG_FRAMES), path.name
+        assert np.all(gaps <= MAX_TARGET_LEG_FRAMES), path.name
 
 
 def test_keyframes_are_deterministic():
@@ -223,7 +225,7 @@ def test_leg_tokens_rejects_a_gap_below_the_minimum():
 
 def test_leg_tokens_rejects_a_gap_above_the_maximum():
     with pytest.raises(segment.SegmentError, match="longer than"):
-        segment.leg_tokens([MAX_LEG_FRAMES + 1])
+        segment.leg_tokens([MAX_TARGET_LEG_FRAMES + 1])
 
 
 def test_every_take_tokenises():
