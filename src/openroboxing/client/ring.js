@@ -68,6 +68,9 @@ const MAX_ELEVATION_RAD = Math.PI / 2 - 0.05;
 const MIN_DISTANCE_M = 1.5;
 const MAX_DISTANCE_M = 24.0;
 
+/* Below this much pointer travel a gesture was a click, not an orbit. See `Ring.wasDragged`. */
+const CLICK_SLOP_PX = 4;
+
 /* Per unit of `wheel.deltaY`. Small because a notch is ~100 units in `deltaMode: PIXEL`, which
  * makes one notch about a 10 % change. */
 const ZOOM_PER_WHEEL_UNIT = 0.001;
@@ -178,6 +181,10 @@ export class Ring {
       home: null,   // the framing `frameRing` computed, so a reset needs no arena to re-read
     };
 
+    /* How far the pointer travelled during the most recent gesture, in CSS pixels. A page that also
+       *clicks* on the canvas reads this to tell a click from the end of a drag — see `wasDragged`. */
+    this.lastDragPx = 0;
+
     this._addLights();
     this._bindOrbit();
     window.addEventListener('resize', () => this.resize());
@@ -199,9 +206,18 @@ export class Ring {
     let lastX = 0;
     let lastY = 0;
 
+    /* Set here rather than in a stylesheet **because it is part of the behaviour, not part of the
+       look**. Without it a browser claims a drag for scrolling or pinch-zooming and fires
+       `pointercancel` instead of `pointermove`, so orbiting silently does nothing — and it does that
+       on exactly the devices least likely to be tested on. Every page that builds a Ring gets it,
+       which is the point: `sparring.html` loads a different stylesheet from `index.html` and had no
+       such rule, so the camera it shares with the ring client would not turn. */
+    this.canvas.style.touchAction = 'none';
+
     this.canvas.addEventListener('pointerdown', (event) => {
       if (event.button !== 0) return;
       dragging = true;
+      this.lastDragPx = 0;
       lastX = event.clientX;
       lastY = event.clientY;
       this.canvas.setPointerCapture(event.pointerId);
@@ -213,6 +229,7 @@ export class Ring {
       const dy = event.clientY - lastY;
       lastX = event.clientX;
       lastY = event.clientY;
+      this.lastDragPx += Math.hypot(dx, dy);
       /* Drag right turns the ring right; drag up lifts the camera and looks further down. Both are
          negated because moving the *pointer* one way moves the *scene* that way, which means the
          camera goes the other. */
@@ -259,6 +276,18 @@ export class Ring {
       orbit.target.z + Math.sin(orbit.elevation) * orbit.distance,
     );
     this.camera.lookAt(orbit.target);
+  }
+
+  /* Did the gesture that just ended orbit the camera, rather than click on one spot?
+   *
+   * A browser fires `click` at the end of a drag as well as on a tap, so a page that places
+   * something where you click — `sparring.js` teleports the sacco — would place it wherever a drag
+   * happened to finish. Any such handler must ask this first. The threshold is slack for a hand that
+   * moves a pixel or two while pressing, not a real orbit: `ORBIT_RAD_PER_PX` makes 4 px about a
+   * degree, which is invisible.
+   */
+  wasDragged() {
+    return this.lastDragPx > CLICK_SLOP_PX;
   }
 
   /* Back to the framing `frameRing` chose — the broadcast view the round opened on. */

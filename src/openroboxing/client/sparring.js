@@ -609,6 +609,10 @@ const pickPoint = new THREE.Vector3();
 
 canvas.addEventListener('click', (event) => {
   if (!S.picking) return;
+  /* A browser fires `click` at the end of a drag too, so without this an orbit that finishes over
+     the ring teleports the sacco to wherever the gesture happened to end. Picking stays armed —
+     the player turned the view, they did not choose a spot. */
+  if (ring.wasDragged()) return;
   const rect = canvas.getBoundingClientRect();
   const ndc = new THREE.Vector2(
     ((event.clientX - rect.left) / rect.width) * 2 - 1,

@@ -158,7 +158,7 @@ canvas#ring {
 
 /* Drag to orbit, wheel to zoom, double-click for the broadcast view (`ring.js`). The cursor is the
    only affordance saying so on the canvas itself; the legend says it in words. */
-#ring { cursor: grab; touch-action: none; }
+#ring { cursor: grab; }   /* touch-action is set by `Ring` itself — it is behaviour, not look */
 #ring:active { cursor: grabbing; }
 
 .banner {

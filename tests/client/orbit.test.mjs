@@ -19,6 +19,7 @@ function makeRing() {
   const canvas = {
     clientWidth: 960,
     clientHeight: 540,
+    style: {},
     addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); },
     setPointerCapture: () => {},
     releasePointerCapture: () => {},
@@ -147,6 +148,40 @@ const distance = (camera, target) =>
     near(p.x, 0) && near(p.y, -(3.5 + 3.4)) && near(p.z, 2.6),
     `got y=${p.y.toFixed(3)} want ${(-(3.5 + 3.4)).toFixed(3)}`,
   );
+}
+
+/* 8. `touch-action: none` is set by Ring itself, not left to each page's stylesheet.
+ *    Without it a browser claims the drag for scrolling and orbiting silently does nothing —
+ *    which is exactly what happened on the sparring page, whose stylesheet had no such rule. */
+{
+  const { ring } = makeRing();
+  check('Ring sets touch-action itself', ring.canvas.style.touchAction === 'none',
+    `got ${JSON.stringify(ring.canvas.style.touchAction)}`);
+}
+
+/* 9. A drag must be distinguishable from a click, or a page that places something where you click
+ *    places it wherever an orbit happened to finish. */
+{
+  const { ring, fire } = makeRing();
+  Ring.prototype.frameRing.call(ring, { ring_size: 4.9 });
+
+  fire('pointerdown', { button: 0, clientX: 400, clientY: 300, pointerId: 1 });
+  fire('pointerup', { pointerId: 1 });
+  check('a still press is not a drag', !ring.wasDragged(), `${ring.lastDragPx} px`);
+
+  fire('pointerdown', { button: 0, clientX: 400, clientY: 300, pointerId: 1 });
+  fire('pointermove', { clientX: 402, clientY: 301, pointerId: 1 });
+  fire('pointerup', { pointerId: 1 });
+  check('a two-pixel wobble is not a drag', !ring.wasDragged(), `${ring.lastDragPx.toFixed(1)} px`);
+
+  fire('pointerdown', { button: 0, clientX: 400, clientY: 300, pointerId: 1 });
+  fire('pointermove', { clientX: 500, clientY: 300, pointerId: 1 });
+  fire('pointerup', { pointerId: 1 });
+  check('a real orbit is a drag', ring.wasDragged(), `${ring.lastDragPx.toFixed(1)} px`);
+
+  fire('pointerdown', { button: 0, clientX: 400, clientY: 300, pointerId: 1 });
+  fire('pointerup', { pointerId: 1 });
+  check('the next press clears the previous drag', !ring.wasDragged());
 }
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
