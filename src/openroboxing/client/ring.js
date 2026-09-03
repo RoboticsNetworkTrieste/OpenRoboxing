@@ -213,18 +213,29 @@ export class Ring {
        which is the point: `sparring.html` loads a different stylesheet from `index.html` and had no
        such rule, so the camera it shares with the ring client would not turn. */
     this.canvas.style.touchAction = 'none';
+    /* A canvas is draggable content as far as the browser is concerned. Left alone, pressing on one
+       and moving can start a native selection or image drag, and on a trackpad that is what happens
+       instead of a gesture — the browser takes the pointer and no `pointermove` ever arrives. */
+    this.canvas.style.userSelect = 'none';
+    this.canvas.style.webkitUserSelect = 'none';
 
-    this.canvas.addEventListener('pointerdown', (event) => {
-      if (event.button !== 0) return;
-      dragging = true;
-      this.lastDragPx = 0;
-      lastX = event.clientX;
-      lastY = event.clientY;
-      this.canvas.setPointerCapture(event.pointerId);
-    });
-
-    this.canvas.addEventListener('pointermove', (event) => {
+    const release = (event) => {
       if (!dragging) return;
+      dragging = false;
+      if (this.canvas.hasPointerCapture?.(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
+      }
+    };
+
+    const move = (event) => {
+      if (!dragging) return;
+      /* The button came up somewhere we never heard about — a browser that steals the pointer
+         mid-gesture does not always send `pointerup`, and without this the drag would stay latched
+         and the ring would keep turning under a pointer that is merely passing over. */
+      if (event.buttons === 0) {
+        release(event);
+        return;
+      }
       const dx = event.clientX - lastX;
       const dy = event.clientY - lastY;
       lastX = event.clientX;
@@ -236,17 +247,43 @@ export class Ring {
       this.orbit.azimuth -= dx * ORBIT_RAD_PER_PX;
       this.orbit.elevation -= dy * ORBIT_RAD_PER_PX;
       this._applyOrbit();
-    });
-
-    const release = (event) => {
-      if (!dragging) return;
-      dragging = false;
-      if (this.canvas.hasPointerCapture?.(event.pointerId)) {
-        this.canvas.releasePointerCapture(event.pointerId);
-      }
     };
-    this.canvas.addEventListener('pointerup', release);
-    this.canvas.addEventListener('pointercancel', release);
+
+    this.canvas.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (event.button !== 0) return;
+        /* The other half of not losing the pointer to a native drag. Registered `passive: false`
+           because a passive listener is forbidden from calling this and the browser ignores it. */
+        event.preventDefault?.();
+        dragging = true;
+        this.lastDragPx = 0;
+        lastX = event.clientX;
+        lastY = event.clientY;
+        /* Capture keeps a drag alive past the edge of the canvas. It is an optimisation, not a
+           requirement — the listeners below are on the window for exactly that reason — so a
+           browser that refuses it must not take the gesture down with it. */
+        try {
+          this.canvas.setPointerCapture?.(event.pointerId);
+        } catch {
+          /* no capture; the window listeners still see the whole drag */
+        }
+      },
+      { passive: false },
+    );
+
+    /* Move and release are watched on the **window**, not the canvas: a drag that strays outside the
+       canvas — easy to do on a trackpad, where the pointer travels further than the gesture feels —
+       would otherwise stop orbiting mid-turn and never release, leaving the next click stuck in a
+       drag. Deliberately *not* also bound to the canvas: pointer events bubble, so binding both
+       would run `move` twice per event and turn the ring at double speed.
+
+       `defaultView` is absent outside a browser (the Node harness in `tests/client/`), and there the
+       canvas stub is the event target. */
+    const view = this.canvas.ownerDocument?.defaultView ?? this.canvas;
+    view.addEventListener('pointermove', move);
+    view.addEventListener('pointerup', release);
+    view.addEventListener('pointercancel', release);
 
     this.canvas.addEventListener(
       'wheel',

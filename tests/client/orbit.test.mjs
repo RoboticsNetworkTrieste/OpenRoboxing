@@ -184,5 +184,97 @@ const distance = (camera, target) =>
   check('the next press clears the previous drag', !ring.wasDragged());
 }
 
+/* 10. The two things that stopped a trackpad click-and-drag working at all. */
+{
+  const { ring, fire } = makeRing();
+  Ring.prototype.frameRing.call(ring, { ring_size: 4.9 });
+
+  check('Ring suppresses text selection on the canvas', ring.canvas.style.userSelect === 'none',
+    `got ${JSON.stringify(ring.canvas.style.userSelect)}`);
+
+  let prevented = false;
+  fire('pointerdown', {
+    button: 0, clientX: 400, clientY: 300, pointerId: 1,
+    preventDefault: () => { prevented = true; },
+  });
+  check('pointerdown prevents the browser starting a native drag', prevented);
+  fire('pointerup', { pointerId: 1 });
+}
+
+/* 11. A browser that refuses pointer capture must not take the whole gesture down with it. */
+{
+  const listeners = {};
+  const canvas = {
+    clientWidth: 960,
+    clientHeight: 540,
+    style: {},
+    addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); },
+    setPointerCapture: () => { throw new Error('InvalidPointerId'); },
+    releasePointerCapture: () => {},
+    hasPointerCapture: () => false,
+  };
+  const ring = Object.create(Ring.prototype);
+  ring.canvas = canvas;
+  ring.renderer = { setSize: () => {} };
+  ring.camera = new THREE.PerspectiveCamera(42, 16 / 9, 0.05, 200);
+  ring.camera.up.set(0, 0, 1);
+  ring.orbit = {
+    azimuth: -Math.PI / 2, elevation: 0, distance: 1,
+    target: new THREE.Vector3(0, 0, 0.9), home: null,
+  };
+  ring.lastDragPx = 0;
+
+  let threw = false;
+  try {
+    Ring.prototype._bindOrbit.call(ring);
+    Ring.prototype.frameRing.call(ring, { ring_size: 4.9 });
+    const before = ring.camera.position.clone();
+    const fire = (type, event) => (listeners[type] || []).forEach((fn) => fn(event));
+    fire('pointerdown', { button: 0, clientX: 400, clientY: 300, pointerId: 1 });
+    fire('pointermove', { clientX: 700, clientY: 300, pointerId: 1 });
+    fire('pointerup', { pointerId: 1 });
+    check('a refused pointer capture still orbits', ring.camera.position.distanceTo(before) > 0.5,
+      `moved ${ring.camera.position.distanceTo(before).toFixed(3)} m`);
+  } catch (err) {
+    threw = true;
+  }
+  check('a refused pointer capture does not throw', !threw);
+}
+
+/* 12. Move and release are watched once, not twice: bound to both the window and the canvas they
+ *     would each run per event and the ring would turn at double speed. */
+{
+  const bound = [];
+  const canvas = {
+    clientWidth: 960, clientHeight: 540, style: {},
+    addEventListener: (type) => bound.push(['canvas', type]),
+    setPointerCapture: () => {}, releasePointerCapture: () => {}, hasPointerCapture: () => false,
+    ownerDocument: { defaultView: { addEventListener: (type) => bound.push(['window', type]) } },
+  };
+  const ring = Object.create(Ring.prototype);
+  ring.canvas = canvas;
+  Ring.prototype._bindOrbit.call(ring);
+  const moves = bound.filter(([, type]) => type === 'pointermove');
+  check('pointermove is bound exactly once', moves.length === 1, JSON.stringify(moves));
+  check('pointermove is bound on the window', moves[0]?.[0] === 'window', JSON.stringify(moves));
+  check('pointerdown stays on the canvas',
+    bound.some(([where, type]) => where === 'canvas' && type === 'pointerdown'));
+}
+
+/* 13. A move arriving with no button held ends the drag rather than latching it. */
+{
+  const { ring, fire } = makeRing();
+  Ring.prototype.frameRing.call(ring, { ring_size: 4.9 });
+  fire('pointerdown', { button: 0, clientX: 400, clientY: 300, pointerId: 1 });
+  fire('pointermove', { clientX: 450, clientY: 300, pointerId: 1 });
+  const turned = ring.orbit.azimuth;
+
+  fire('pointermove', { clientX: 500, clientY: 300, pointerId: 1, buttons: 0 });
+  const afterRelease = ring.orbit.azimuth;
+  fire('pointermove', { clientX: 900, clientY: 300, pointerId: 1 });
+  check('a buttonless move ends the drag', ring.orbit.azimuth === afterRelease,
+    `azimuth kept moving: ${turned} -> ${ring.orbit.azimuth}`);
+}
+
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);
