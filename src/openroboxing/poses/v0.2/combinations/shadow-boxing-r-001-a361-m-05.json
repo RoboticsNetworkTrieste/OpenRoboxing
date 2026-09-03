@@ -42,45 +42,6 @@
       ]
     },
     {
-      "heading_offset": -0.007781005976667643,
-      "joint_angles": {
-        "left_ankle_pitch_joint": -0.24577424584623556,
-        "left_ankle_roll_joint": -0.24005125886906856,
-        "left_elbow_joint": 0.4468088263666035,
-        "left_hip_pitch_joint": 0.14646370241081919,
-        "left_hip_roll_joint": 0.13969625804938127,
-        "left_hip_yaw_joint": 0.23754578636795315,
-        "left_knee_joint": 0.24185252592358933,
-        "left_shoulder_pitch_joint": -0.03958440602910628,
-        "left_shoulder_roll_joint": 0.3997199129609666,
-        "left_shoulder_yaw_joint": -0.3467502348137825,
-        "left_wrist_pitch_joint": 0.19464480795576913,
-        "left_wrist_roll_joint": 0.20373722286708124,
-        "left_wrist_yaw_joint": 0.14075459080120556,
-        "right_ankle_pitch_joint": -0.33097778162997227,
-        "right_ankle_roll_joint": 0.22197059902284963,
-        "right_elbow_joint": 0.022498374417013894,
-        "right_hip_pitch_joint": -0.06324184836638186,
-        "right_hip_roll_joint": -0.11888844270710486,
-        "right_hip_yaw_joint": 0.0642139740704624,
-        "right_knee_joint": 0.49830329987012456,
-        "right_shoulder_pitch_joint": -0.29578552109811923,
-        "right_shoulder_roll_joint": -0.4526326410146582,
-        "right_shoulder_yaw_joint": 0.7021679841324789,
-        "right_wrist_pitch_joint": 0.3290823540623064,
-        "right_wrist_roll_joint": -0.5849120176879345,
-        "right_wrist_yaw_joint": 0.42248420748814364,
-        "waist_pitch_joint": 0.2643768900384946,
-        "waist_roll_joint": -0.01015972965106596,
-        "waist_yaw_joint": -0.09225671846899418
-      },
-      "leg_tokens": 8,
-      "root_offset": [
-        0.018274593353271487,
-        0.011022176742553708
-      ]
-    },
-    {
       "heading_offset": 0.04668339419530021,
       "joint_angles": {
         "left_ankle_pitch_joint": -0.2921395457439956,
@@ -113,7 +74,7 @@
         "waist_roll_joint": -0.14983353177069228,
         "waist_yaw_joint": -0.11648502658867056
       },
-      "leg_tokens": 6,
+      "leg_tokens": 14,
       "root_offset": [
         0.033822069168090815,
         0.03215465545654296

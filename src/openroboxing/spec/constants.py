@@ -133,23 +133,26 @@ recording drives it forwards. It still lands on the ghost, but the path is incoh
 supplied by the placement now (`spec/intent.md` 3.0 deleted the walk approach), so a combination
 carrying its own is working against the control rather than with it.
 
-**Measured 2026-08-28**, and the value sits in a real gap rather than being chosen: sorted by
-recorded travel the 136-combination library runs ... 0.72, 0.75, 0.77, 0.78, 0.78, 0.98, then jumps
-to 1.47, 2.84, 3.08, 3.09, 3.37. The 0.49 m gap between 0.98 and 1.47 is the widest in the
-distribution, and everything above it is a `combat_turn_jog_start` run. 1.2 m sits in that gap.
+**Re-measured 2026-09-03, and it now excludes nothing** — kept as a guard, not as an active filter.
+Rebuilding the library on sparse targets (`spec/intent.md` 3.2) cut combinations from 3-6 keyframes
+to 2-3, and a shorter combination carries correspondingly less of its own recorded travel: the whole
+174-record library now tops out at **0.78 m**, against this 1.2 m threshold. The long
+`combat_turn_jog_start` runs that motivated the constant are still in the corpus, but each is now
+split across several combinations, none of which carries more than a fraction of the run.
 
-Note it excludes 6 combinations, not the whole jog family: two of that family's combinations travel
-only 0.78 m — the turn rather than the run — and are kept.
+Retained rather than deleted because the failure it prevents is real and would return silently: a
+combination recording metres of its own travel fights its placement, since `warp` subtracts the
+recording's displacement from the ghost and ramps the remainder. If a future corpus or a raised
+:data:`MAX_TARGET_LEG_FRAMES` reintroduces long single combinations, this catches them.
+
+Superseded measurement, for the record — over the old 136-combination library the sorted travel ran
+... 0.72, 0.75, 0.77, 0.78, 0.78, 0.98, then jumped to 1.47, 2.84, 3.08, 3.09, 3.37, and 1.2 m sat in
+that 0.49 m gap, excluding 6 combinations.
 """
 
-COMBINATION_MIN_KEYFRAMES: int = 3
-COMBINATION_MAX_KEYFRAMES: int = 6
-"""A combination is 3-6 keyframes. Becomes 2-3 when the library is rebuilt on sparse targets.
-
-.. note::
-   These bounds and the library are a matched pair — the shipped v0.2 records have 6 keyframes, so
-   lowering the maximum before rebuilding would invalidate every one of them. They change in the
-   same commit as the rebuild. The reasoning for the 2-3 they become:
+COMBINATION_MIN_KEYFRAMES: int = 2
+COMBINATION_MAX_KEYFRAMES: int = 3
+"""A combination is 2-3 keyframes, i.e. 1-2 legs. Was 3-6 before `spec/intent.md` 3.2.
 
 Derived from duration, not taste. At up to :data:`MAX_TARGET_LEG_FRAMES` (3.2 s) per leg, two legs is
 6.4 s and three would be 9.6 s — past the 7.6 s the shipped library reaches and past what the

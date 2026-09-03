@@ -263,12 +263,18 @@ def build_from_take(
         take_name: the take's stem, used for provenance and for naming.
         qpos: ``(N, 36)`` MuJoCo qpos at ``GENERATOR_HZ``, from ``motion_import.load_take``.
 
-    Every leg is plannable by construction: :func:`segment.keyframe_indices` densifies any gap too
-    long for one plan, so there is no splitting and no repeated keyframe here. A run whose legs
-    cannot be tokenised raises rather than being dropped, because a silently skipped combination is a
-    silently smaller library (`CLAUDE.md` invariant 5).
+    Every leg is **reachable** by construction: :func:`segment.keyframe_indices_with_provenance`
+    densifies any gap longer than ``MAX_TARGET_LEG_FRAMES``, and a leg longer than one plan is run as
+    an untargeted phase followed by a landing in-between (``runtime/sequence.py``), so there is no
+    splitting and no repeated keyframe here. A run whose legs cannot be tokenised raises rather than
+    being dropped, because a silently skipped combination is a silently smaller library
+    (`CLAUDE.md` invariant 5).
     """
-    indices = segment.keyframe_indices(qpos, conventions=conventions)
+    # Thinned to sparse targets before grouping: `spec/intent.md` 3.2 halves the number of poses a
+    # plan is aimed at so each leg carries twice the motion. Provenance — which frames were punches —
+    # only exists at this point, because a Keyframe records angles and timing, not how it was chosen.
+    detected, punches = segment.keyframe_indices_with_provenance(qpos, conventions=conventions)
+    indices = np.array(segment.thin_targets(detected, punches), dtype=int)
     records: list[CombinationRecord] = []
     for position, run in enumerate(segment.combination_runs(indices)):
         origin = int(run[0])

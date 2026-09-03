@@ -1,0 +1,100 @@
+{
+  "admission": "draft",
+  "duration_ticks": 120,
+  "keyframes": [
+    {
+      "heading_offset": 0.0,
+      "joint_angles": {
+        "left_ankle_pitch_joint": -0.4673536205906044,
+        "left_ankle_roll_joint": -0.26179996375780257,
+        "left_elbow_joint": -0.22776297156442965,
+        "left_hip_pitch_joint": -0.5076317531094764,
+        "left_hip_roll_joint": 0.12311230355788083,
+        "left_hip_yaw_joint": -0.3627275896517767,
+        "left_knee_joint": 1.288009005674665,
+        "left_shoulder_pitch_joint": -0.34845339691104854,
+        "left_shoulder_roll_joint": -0.04010949880654429,
+        "left_shoulder_yaw_joint": -0.6857043980181715,
+        "left_wrist_pitch_joint": -0.3643072173445867,
+        "left_wrist_roll_joint": -1.174430831936508,
+        "left_wrist_yaw_joint": -0.2841257617637085,
+        "right_ankle_pitch_joint": -0.1767770171917697,
+        "right_ankle_roll_joint": 0.26179996375780257,
+        "right_elbow_joint": 1.5690063171140514,
+        "right_hip_pitch_joint": -0.925822991689782,
+        "right_hip_roll_joint": -0.010118507941193582,
+        "right_hip_yaw_joint": 0.34871976906148794,
+        "right_knee_joint": 1.0805219952695515,
+        "right_shoulder_pitch_joint": -2.3989203248140916,
+        "right_shoulder_roll_joint": -0.7486960708895726,
+        "right_shoulder_yaw_joint": 1.7792331453789454,
+        "right_wrist_pitch_joint": 0.2833178313996678,
+        "right_wrist_roll_joint": -0.3408880229221839,
+        "right_wrist_yaw_joint": 0.13134055534198222,
+        "waist_pitch_joint": 0.5199999415872716,
+        "waist_roll_joint": 0.08326366515199811,
+        "waist_yaw_joint": 0.0982877211525531
+      },
+      "leg_tokens": null,
+      "root_offset": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "heading_offset": -0.48712335827155817,
+      "joint_angles": {
+        "left_ankle_pitch_joint": -0.3933182372508692,
+        "left_ankle_roll_joint": -0.11864870428105093,
+        "left_elbow_joint": 0.8449219194050142,
+        "left_hip_pitch_joint": 0.06864396703254518,
+        "left_hip_roll_joint": 0.16419965100312298,
+        "left_hip_yaw_joint": 0.42429791874023104,
+        "left_knee_joint": 0.3960374602254763,
+        "left_shoulder_pitch_joint": 0.3283098015222037,
+        "left_shoulder_roll_joint": 0.33580674115109765,
+        "left_shoulder_yaw_joint": -0.33939314841785073,
+        "left_wrist_pitch_joint": -0.07237038810255172,
+        "left_wrist_roll_joint": 0.1665838580278098,
+        "left_wrist_yaw_joint": 0.19647098085871584,
+        "right_ankle_pitch_joint": -0.4031333580988471,
+        "right_ankle_roll_joint": 0.04924969734211749,
+        "right_elbow_joint": 0.7185037074257853,
+        "right_hip_pitch_joint": -0.17935235522284246,
+        "right_hip_roll_joint": -0.12866392014645298,
+        "right_hip_yaw_joint": 0.02304676559463677,
+        "right_knee_joint": 0.8228005343611017,
+        "right_shoulder_pitch_joint": 0.39177716388123573,
+        "right_shoulder_roll_joint": -0.2947715546158806,
+        "right_shoulder_yaw_joint": 0.1982868039591982,
+        "right_wrist_pitch_joint": 0.025261097977897762,
+        "right_wrist_roll_joint": -0.2709043690810759,
+        "right_wrist_yaw_joint": -0.2702619308367093,
+        "waist_pitch_joint": 0.2426604388343375,
+        "waist_roll_joint": 0.004856584243460107,
+        "waist_yaw_joint": -0.012955512715042332
+      },
+      "leg_tokens": 18,
+      "root_offset": [
+        0.08624649047851562,
+        0.19488382816314698
+      ]
+    }
+  ],
+  "library_version": "v0.2",
+  "name": "shadow-boxing-r-001-a359-m-04",
+  "recorded_displacement": [
+    0.08624649047851562,
+    0.19488382816314698
+  ],
+  "recorded_heading_delta": -0.48712335827155817,
+  "schema_version": "0.1",
+  "source": {
+    "end_frame": 947,
+    "mirrored": true,
+    "start_frame": 874,
+    "take": "shadow_boxing_R_001__A359_M"
+  },
+  "telegraph_ms": null,
+  "tracking_error_rad": null
+}

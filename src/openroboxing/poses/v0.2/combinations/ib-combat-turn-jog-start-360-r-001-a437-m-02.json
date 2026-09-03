@@ -1,0 +1,100 @@
+{
+  "admission": "draft",
+  "duration_ticks": 53,
+  "keyframes": [
+    {
+      "heading_offset": 0.0,
+      "joint_angles": {
+        "left_ankle_pitch_joint": -0.44467030934071994,
+        "left_ankle_roll_joint": 0.03990064398160438,
+        "left_elbow_joint": -0.863400016901851,
+        "left_hip_pitch_joint": -0.43605354901045384,
+        "left_hip_roll_joint": 0.26841818246819504,
+        "left_hip_yaw_joint": 0.28204363632595686,
+        "left_knee_joint": 1.5331432916440717,
+        "left_shoulder_pitch_joint": 0.41456709729512453,
+        "left_shoulder_roll_joint": 0.7527741199533199,
+        "left_shoulder_yaw_joint": -0.25947080441772363,
+        "left_wrist_pitch_joint": 0.0775227955313152,
+        "left_wrist_roll_joint": 0.3948913548655692,
+        "left_wrist_yaw_joint": 0.13085313898710701,
+        "right_ankle_pitch_joint": -0.5258300045140484,
+        "right_ankle_roll_joint": 0.03904140093755506,
+        "right_elbow_joint": -0.5618521516519323,
+        "right_hip_pitch_joint": -0.1750493157652205,
+        "right_hip_roll_joint": -0.1881629343665425,
+        "right_hip_yaw_joint": -0.3594677334880718,
+        "right_knee_joint": 0.9133957238168068,
+        "right_shoulder_pitch_joint": -0.2047353766662968,
+        "right_shoulder_roll_joint": -0.8078883539655995,
+        "right_shoulder_yaw_joint": 0.05074119637967728,
+        "right_wrist_pitch_joint": 0.06882136927903489,
+        "right_wrist_roll_joint": -0.46329141911646515,
+        "right_wrist_yaw_joint": -0.16518057840262135,
+        "waist_pitch_joint": 0.39028455830493014,
+        "waist_roll_joint": -0.0032479811180072845,
+        "waist_yaw_joint": 0.0968138848470235
+      },
+      "leg_tokens": null,
+      "root_offset": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "heading_offset": -0.0033057672387251102,
+      "joint_angles": {
+        "left_ankle_pitch_joint": -0.03734262485269917,
+        "left_ankle_roll_joint": 0.07202813252689415,
+        "left_elbow_joint": -0.9296696624545926,
+        "left_hip_pitch_joint": -0.613638793272237,
+        "left_hip_roll_joint": 0.03599225662911416,
+        "left_hip_yaw_joint": 0.07437853252396986,
+        "left_knee_joint": 0.9326639144127289,
+        "left_shoulder_pitch_joint": 0.6365392060277771,
+        "left_shoulder_roll_joint": 0.8152240426249019,
+        "left_shoulder_yaw_joint": -0.03756290634825188,
+        "left_wrist_pitch_joint": -0.026773122087461004,
+        "left_wrist_roll_joint": 0.14868721697127493,
+        "left_wrist_yaw_joint": 0.14712092359395018,
+        "right_ankle_pitch_joint": -0.6070360730856024,
+        "right_ankle_roll_joint": 0.09283614858203453,
+        "right_elbow_joint": -0.3358080676013292,
+        "right_hip_pitch_joint": 0.029771932845603644,
+        "right_hip_roll_joint": -0.3799901700443546,
+        "right_hip_yaw_joint": -0.005991008114683625,
+        "right_knee_joint": 2.0008901349151507,
+        "right_shoulder_pitch_joint": 0.007396148086321806,
+        "right_shoulder_roll_joint": -0.6084568583631883,
+        "right_shoulder_yaw_joint": 0.23156099127634078,
+        "right_wrist_pitch_joint": -0.0738102829901178,
+        "right_wrist_roll_joint": -0.45411913793858183,
+        "right_wrist_yaw_joint": -0.16206553220695438,
+        "waist_pitch_joint": 0.42981322898970326,
+        "waist_roll_joint": 0.008719072927281394,
+        "waist_yaw_joint": 0.14039887524635664
+      },
+      "leg_tokens": 8,
+      "root_offset": [
+        -0.014850454330444338,
+        0.5470791625976563
+      ]
+    }
+  ],
+  "library_version": "v0.2",
+  "name": "ib-combat-turn-jog-start-360-r-001-a437-m-02",
+  "recorded_displacement": [
+    -0.014850454330444338,
+    0.5470791625976563
+  ],
+  "recorded_heading_delta": -0.0033057672387251102,
+  "schema_version": "0.1",
+  "source": {
+    "end_frame": 450,
+    "mirrored": true,
+    "start_frame": 419,
+    "take": "ib_combat_turn_jog_start_360_R_001__A437_M"
+  },
+  "telegraph_ms": null,
+  "tracking_error_rad": null
+}

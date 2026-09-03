@@ -64,10 +64,14 @@ Conventions
 - Reach turning points are eligible at prominence >= :data:`REACH_TURNING_PROMINENCE_M`; level and
   shift fill turning points at >= :data:`FILL_TURNING_PROMINENCE_M`. Both are metres, both measured
   — see the constants' own docstrings for what pinned each value.
-- Keyframes are never closer than
-  :data:`~openroboxing.spec.constants.MIN_KEYFRAME_GAP_FRAMES` nor further apart than
-  :data:`~openroboxing.spec.constants.MAX_LEG_FRAMES` — the shortest and longest plans MotionBricks
-  can produce. The lower bound is enforced by selection, the upper by :func:`densify`, which now
+- **Detection and selection are two steps with two spacings.** Detected keyframes are never closer
+  than :data:`~openroboxing.spec.constants.MIN_KEYFRAME_GAP_FRAMES` (the shortest plan MotionBricks
+  can produce); the *targets* :func:`thin_targets` keeps are never closer than
+  :data:`~openroboxing.spec.constants.MIN_TARGET_GAP_FRAMES` and never further apart than
+  :data:`~openroboxing.spec.constants.MAX_TARGET_LEG_FRAMES`. That upper bound is the longest **leg**,
+  not the longest plan: since `spec/intent.md` 3.2 a leg longer than one plan runs an untargeted
+  phase and then a landing in-between, so the planner's maximum no longer bounds it.
+  The lower bound is enforced by selection, the upper by :func:`densify`, which now
   inserts at the strongest turning point inside the gap (any of the three signals) rather than at
   the gap's busiest frame, for the same reason the top-level selection changed: the busiest frame in
   a gap is a mid-swing frame, not a pose.
@@ -79,6 +83,7 @@ Conventions
 
 from __future__ import annotations
 
+import math
 from itertools import pairwise
 from typing import TYPE_CHECKING
 
@@ -220,6 +225,7 @@ def keyframe_indices(
     qpos: np.ndarray,
     *,
     min_gap: int = MIN_KEYFRAME_GAP_FRAMES,
+    min_target_gap: int = MIN_TARGET_GAP_FRAMES,
     max_gap: int = MAX_TARGET_LEG_FRAMES,
     reach_prominence: float = REACH_TURNING_PROMINENCE_M,
     fill_prominence: float = FILL_TURNING_PROMINENCE_M,
@@ -244,6 +250,7 @@ def keyframe_indices(
     indices, _ = keyframe_indices_with_provenance(
         qpos,
         min_gap=min_gap,
+        min_target_gap=min_target_gap,
         max_gap=max_gap,
         reach_prominence=reach_prominence,
         fill_prominence=fill_prominence,
@@ -257,6 +264,7 @@ def keyframe_indices_with_provenance(
     qpos: np.ndarray,
     *,
     min_gap: int = MIN_KEYFRAME_GAP_FRAMES,
+    min_target_gap: int = MIN_TARGET_GAP_FRAMES,
     max_gap: int = MAX_TARGET_LEG_FRAMES,
     reach_prominence: float = REACH_TURNING_PROMINENCE_M,
     fill_prominence: float = FILL_TURNING_PROMINENCE_M,
@@ -303,9 +311,17 @@ def keyframe_indices_with_provenance(
             f"(reach >= {reach_prominence} m); a combination needs {COMBINATION_MIN_KEYFRAMES}"
         )
 
+    # Thin, *then* densify, and the order is not interchangeable: thinning removes keyframes and so
+    # re-opens gaps a densification run before it had already closed. Measured 2026-09-03 — thinning
+    # after densify left a 108-frame gap against a 96-frame maximum. Densification last is what makes
+    # the cap a guarantee rather than an aspiration.
+    targets = thin_targets(picked, set(punches), min_gap=min_target_gap)
+
     all_points = turning_points(reach, 0.0) + turning_points(level, 0.0) + turning_points(shift, 0.0)
     all_points.sort(key=lambda point: -point[1])
-    dense = densify(picked, all_points, min_gap=min_gap, max_gap=max_gap)
+    # `min_target_gap`, not `min_gap`: a frame inserted to split an over-long leg is a target like
+    # any other, and inserting it at detection spacing would undo the thinning it just went through.
+    dense = densify(targets, all_points, min_gap=min_target_gap, max_gap=max_gap)
     return np.array(dense, dtype=int), set(punches)
 
 
@@ -360,13 +376,48 @@ def combination_runs(
     min_len: int = COMBINATION_MIN_KEYFRAMES,
     max_len: int = COMBINATION_MAX_KEYFRAMES,
 ) -> list[tuple[int, ...]]:
-    """Group keyframes into consecutive runs of ``min_len``-``max_len``.
+    """Group keyframes into consecutive runs of ``min_len``-``max_len``, **as evenly as possible**.
 
-    A trailing group shorter than ``min_len`` is dropped rather than padded: three keyframes is the
-    shortest thing the design calls a combination, and padding one would invent motion.
+    The number of runs is fixed at ``ceil(n / max_len)`` — the fewest that can hold them — and the
+    keyframes are then spread across those runs evenly, largest first. So 7 targets become 3+2+2, not
+    3+3+1.
+
+    Why even, rather than filling greedily and dropping the remainder
+    -----------------------------------------------------------------
+    Greedy filling leaves a trailing group of 1, which had to be dropped (a single keyframe is not a
+    combination, and padding it would invent motion). That cost two things, both measured
+    2026-09-03 after `spec/intent.md` 3.2 shortened combinations to ``max_len`` 3, which made
+    remainders far more frequent:
+
+    - **it discarded recorded motion silently** — a take with 7 targets lost its last one entirely;
+    - **it broke mirror balance.** A take and its mirror can differ by one target, because mirroring
+      a real capture is not bit-symmetric and a prominence near threshold falls either side of it.
+      Under greedy filling that one-target difference became a *whole missing combination* (13 → 4
+      runs but 14 → 5), so a move existed in one stance and not the other. Under even distribution
+      both give ``ceil(n / 3)`` runs and the pair stays balanced.
+
+    Even distribution cannot produce a run below ``min_len`` for the shipped constants, but this
+    raises rather than dropping if it ever does — a silently smaller library is exactly what
+    `CLAUDE.md` invariant 5 forbids.
     """
-    runs = [tuple(indices[i : i + max_len]) for i in range(0, len(indices), max_len)]
-    return [run for run in runs if len(run) >= min_len]
+    n = len(indices)
+    if n < min_len:
+        return []
+
+    groups = math.ceil(n / max_len)
+    base, extra = divmod(n, groups)
+    sizes = [base + 1] * extra + [base] * (groups - extra)
+    if any(size < min_len for size in sizes):
+        raise SegmentError(
+            f"cannot split {n} keyframes into runs of {min_len}-{max_len}: the even split is "
+            f"{sizes}, which has a run below the minimum"
+        )
+
+    runs, start = [], 0
+    for size in sizes:
+        runs.append(tuple(indices[start : start + size]))
+        start += size
+    return runs
 
 
 def leg_tokens(gap_frames: list[int]) -> list[int]:
