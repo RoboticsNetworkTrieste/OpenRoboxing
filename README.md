@@ -17,7 +17,6 @@ begins inside it.
 
 > Both clips are MuJoCo renders of the simulation, **not screen captures of the web UI** — they show
 > the fight, not the interface around it (no combination picker, no commit queue, no minimap).
-> Regenerate them with `.venv_mb/bin/python -m openroboxing.tools.render_media`.
 
 ## Install
 
