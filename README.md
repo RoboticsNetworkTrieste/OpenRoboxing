@@ -3,6 +3,22 @@
 A boxing game for the Unitree G1 — one player fighter against another, driven through NVIDIA's
 GEAR-SONIC whole-body policy and the MotionBricks motion generator, in MuJoCo, from a browser.
 
+![Two G1s boxing in the ring](docs/media/ring.gif)
+
+Two G1s under physics, each running recorded shadow-boxing combinations from the library. This is
+the world the browser client draws, streamed to it as body transforms at 30 FPS.
+
+![Punches landing, with each attributed hit marked](docs/media/contacts.gif)
+
+The same fight started at punching distance. Every orange flash is a hit `runtime/contact.py`
+attributed — a glove on an opponent with a real normal force — not a marker placed by eye. At the
+ring's shipped starting distance a punch lands about once in eight seconds, which is why this clip
+begins inside it.
+
+> Both clips are MuJoCo renders of the simulation, **not screen captures of the web UI** — they show
+> the fight, not the interface around it (no combination picker, no commit queue, no minimap).
+> Regenerate them with `.venv_mb/bin/python -m openroboxing.tools.render_media`.
+
 ## Install
 
 ```bash
