@@ -98,7 +98,7 @@ src/openroboxing/
     intents.py   timeline and commit queue; a commit is a combination (spec/intent.md 3.0)
     sequence.py  CombinationRunner: which leg is live at a tick, and its intent (M6)
     generator.py MotionBricks wrapper: intents -> qpos @30 Hz, and P0 installed at runtime
-    reference.py the reference stream, and THE COMMITTED-PLAN RULE (one implementation only)
+    reference.py the reference stream: pull, resample, stay ahead of the tick; the ambient replan cadence
     bridge.py    qpos -> policy inputs: name-derived remap, 30->50 Hz, velocities
     obs.py       observation assembly (the risky part — see parity/)
     policy.py    GEAR-SONIC via ONNX Runtime; effort limits read from the model

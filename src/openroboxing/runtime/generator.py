@@ -269,9 +269,12 @@ class GeneratorIntent:
         target_heading: optional heading in radians to accompany ``target_position``.
         pose: optional authored key pose the generation should reach. ``None`` leaves the target
             pose to the clip library, which is upstream's behaviour.
-        horizon_tokens: how long the generated move may run, in tokens. ``None`` leaves the clip's
-            own allowance untouched, which is what the runtime asks for since ``spec/intent.md``
-            2.0 — the model picks its own length by argmax.
+        horizon_tokens: how long the generated move may run, in tokens. Since ``spec/intent.md``
+            3.0 the runtime forces each leg to its recorded duration
+            (:meth:`~openroboxing.runtime.sequence.CombinationRunner.intent_for` passes
+            ``leg.horizon_tokens``). ``None`` leaves the clip's own allowance untouched — the model
+            picks its own length by argmax — which only the opening stance and the tools still ask
+            for.
     """
 
     style: str = "walk_boxing"
