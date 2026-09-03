@@ -1100,3 +1100,41 @@ called once, in Task 3. `GeneratorIntent.replan` is added in Task 1 and read in 
 **Known risk carried deliberately:** Task 5 needs a GPU and is the only task that cannot be verified
 by the test suite alone. It is sequenced between the halves rather than at the end so its measurement
 is attributable to the schedule change alone.
+
+---
+
+## Outcome — implemented 2026-09-03
+
+All ten tasks are done and committed (`9b56fe0` … `b969282`). **774 tests pass**, plus 28 of the 29
+`slow` end-to-end tests; `lint.sh` reports 65 findings against a 67 baseline, none in changed files.
+
+The plan was executed with three deviations, each forced by running it rather than by review. They
+are written up in full in the design doc's "Corrections" section:
+
+1. **Task order changed.** The constants and the record validator had to land with Task 3, not Task
+   6, because the pinned-horizon tests need a 24-token leg to exist. `COMBINATION_MIN/MAX_KEYFRAMES`
+   went the other way — held back to Task 9 and flipped in the same commit as the rebuild, since
+   lowering the maximum before rebuilding invalidates every shipped record.
+2. **`densify` had to move after thinning** (Task 7). Thinning re-opens gaps a prior densify closed:
+   measured, a 108-frame gap against a 96-frame cap.
+3. **`combination_runs` had to stop dropping its remainder** (Task 9, unplanned). At `max_len` 3 the
+   greedy fill discarded recorded motion and broke mirror balance 80/81; even distribution restores
+   87/87 and keeps every keyframe.
+
+Measured figures replaced the plan's predicted ones: median leg **15 tokens (2.00 s)**, not 17, and
+**39 %** of legs longer than one plan, not 55 %.
+
+`DRIFT_GAIN` moved **0.803 → 0.935** and its consistency bar fails; see
+`docs/perf/2026-09-03-drift-gain-pinned.md`.
+
+### Pre-existing failure found, not introduced and not fixed here
+
+`tests/test_server.py::test_the_host_rejects_a_ghost_beyond_its_combinations_reach` fails, and
+**fails identically at `82d22c4`, the commit before this work started** (verified in a worktree). It
+is a real defect, not a stale test: `MatchHost.handle` guards the speed ceiling with
+`if staged.is_committable()`, but an `intent` message is only *queued* to the pilot and applied on
+the next tick, so `timeline.staged` is still empty when the following `commit` message is handled.
+The guard is skipped and the commit is accepted. Since that guard is "the one place the speed ceiling
+is enforced" (`spec/intent.md` "Feasibility"), the ceiling currently does not fire on the real server
+path at all. Fixing it means changing when the host applies a staged intent, which is a server-
+behaviour decision outside this plan's scope.
