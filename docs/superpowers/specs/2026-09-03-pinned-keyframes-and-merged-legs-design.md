@@ -1,7 +1,7 @@
 # Pinned keyframes and merged legs
 
 **Date:** 2026-09-03
-**Status:** design approved, not implemented
+**Status:** implemented 2026-09-03. Figures below corrected against the built result — see "Corrections" at the end.
 **Owner decision:** project owner, 2026-09-03
 **Supersedes:** the "consumed exactly" sentence in `spec/intent.md` 3.0 (§"Forced plan lengths are
 back, and that has a cost"), which specifies a contract the runtime never implemented.
@@ -87,8 +87,9 @@ remaining_tokens = ceil(remaining_ticks / (SECONDS_PER_TOKEN * TICK_HZ))
 **`ceil`, not `round`, and this is load-bearing.** A plan that ends a frame or two *short* of the
 boundary leaves the play cursor clamped at the plan's final frame, and
 `get_context_mujoco_qpos` then returns four copies of it — the frozen-context failure described
-below. `ceil` guarantees the last plan always reaches at least the boundary, overshooting by at most
-3 frames, which the next leg's replan simply writes over.
+below. `ceil` guarantees the last plan always reaches at least the boundary, overshooting by **less
+than one token** (4 frames), which the next leg's replan simply writes over. Asserted directly as
+`0 <= landing - boundary < TICKS_PER_TOKEN` in `tests/test_sequence_pinned.py`.
 
 and asks for `remaining_tokens` instead of `leg.horizon_tokens`. The keyframe stays at its absolute
 tick; each replan fills only the shrinking hole between the new context and it. Consumed frames are
@@ -105,13 +106,15 @@ Three regimes fall out, each with a distinct meaning:
 **The `< MIN_TOKENS` rule is the one that fixes the landing.** `MIN_TOKENS` is a hard floor — a
 shorter plan cannot be requested — so without this rule the final 0.8 s of every leg would overshoot
 its boundary, which is the residual defect the alternative "shrink-horizon everywhere" design could
-not remove. Because token granularity is 4 frames, the last plan's end lands within **±2 frames
-(±67 ms)** of the recorded tick.
+not remove. The landing is **never early and less than one token late** — never early is the half
+that matters, since an early end is what clamps the cursor and freezes the context.
+
+Note the no-replan tail is `MIN_TOKENS - 1` tokens, not `MIN_TOKENS`: `ceil` lifts a 5.85-token hole
+back to a 6-token request, so replanning stops strictly below that.
 
 **Landing tick vs intent-switch tick.** The runner's leg boundary remains authoritative for *which*
-leg's intent is issued; the pose lands within ±2 frames of it. A mismatch of up to ~3 ticks between
-"the pose landed" and "the next leg's intent began" is accepted and is well inside the 5-tick
-`_SETTLE_TOLERANCE_TICKS` the existing regression tests already tolerate.
+leg's intent is issued; the pose lands within one token of it. That mismatch is well inside the
+5-tick `_SETTLE_TOLERANCE_TICKS` the existing regression tests already tolerate.
 
 **The hold state is unchanged in behaviour.** Past a combination's end there is no future keyframe.
 The runner keeps returning the final leg (`leg_index` is a fixed point past `end_tick`) and requests
@@ -209,17 +212,22 @@ long-travel combinations is re-derived, not assumed to hold, because leg boundar
 Simulated against the shipped 130-combination library (spacing rule only, no punch constraint, so a
 lower bound on what survives):
 
-| | before | after |
-|---|---|---|
-| legs | 623 | 313 |
-| median leg | 9 tokens (1.20 s) | **17 tokens (2.27 s)** |
-| leg range | 6–16 tokens | 12–36 tokens, capped to 24 by `densify` |
-| legs over `MAX_TOKENS` | 0 | **55 %** |
-| combination duration | 2.40–7.60 s | unchanged by construction |
+Predicted by simulation before implementing, and **measured after**. The simulation thinned within
+each existing combination without re-densifying, which is why it over-stated the leg length and the
+share over `MAX_TOKENS`:
 
-The median leg is **1.9× longer** — the owner's "longer than double", delivered. The 55 % figure is
-the number to keep in view: the untargeted-then-land path is the **majority case**, not an edge case,
-so it must be tested as a first-class path rather than as an exception.
+| | before | predicted | **measured after** |
+|---|---|---|---|
+| combinations | 130 | — | **174** |
+| legs | 623 | 313 | **310** |
+| median leg | 9 tokens (1.20 s) | 17 tokens (2.27 s) | **15 tokens (2.00 s)** |
+| leg range | 6–16 tokens | 12–36 | **6–24 tokens** |
+| legs over `MAX_TOKENS` | 0 | 55 % | **39 %** |
+| combination duration | 2.40–7.60 s | unchanged | **0.93–6.00 s**, median 3.87 s |
+
+The median leg is **1.67× longer**. The 39 % figure is the number to keep in view: the
+untargeted-then-land path is the **majority-adjacent case**, not an edge case, so it is tested as a
+first-class path rather than as an exception.
 
 ---
 
@@ -299,3 +307,39 @@ produces legs longer than 16 tokens, which only Half 1 can run). The plan must t
    `MAX_RECORDED_TRAVEL_M`'s exclusions.
 - `CLAUDE.md` → the "Plan length" and "Combination" rows of the canonical-rates table, and the
   `sequence.py` / `reference.py` layout lines.
+
+
+---
+
+## Corrections made during implementation
+
+Three things this design got wrong, each found by running it rather than by review. They are recorded
+here because the reasoning that produced them is the reasoning most likely to produce them again.
+
+**1. `densify` must run *after* thinning, not before.** The design left densification where it was,
+in the detection step. But thinning *removes* keyframes and so re-opens gaps a prior densify had
+already closed — measured, a 108-frame gap against a 96-frame maximum, which `leg_tokens` then
+refused outright. Densification last is what makes the cap a guarantee instead of an aspiration. It
+also has to use `MIN_TARGET_GAP_FRAMES` for its own spacing, or the frame it inserts undoes the
+thinning it was inserted into.
+
+**2. `combination_runs` had to stop dropping its remainder.** It filled greedily and discarded a
+trailing group below the minimum. That was tolerable at `max_len` 6 and not at 3, where remainders
+are frequent: it discarded recorded motion outright, and it **broke mirror balance**. A take and its
+mirror can differ by one detected target, because mirroring a real capture is not bit-symmetric and a
+prominence near threshold falls either side of it; under greedy filling that one target became a
+whole missing combination (13 targets → 4 runs, but 14 → 5), so a move existed in one stance and not
+the other. Even distribution into `ceil(n / max_len)` runs fixes both — 7 targets become 3+2+2 — and
+the rebuilt library is balanced 87/87.
+
+**3. The punch-capture regression test was measuring the wrong thing.** It ran against the final
+keyframes, where thinning deliberately drops interior punches, so thinning appeared to break it
+(76.9 % → 53.8 %). The 39/48 measurement belongs to *detection* — the segmenter's ability to find a
+reversal rather than a mid-swing frame — so the test was repointed there, where it still reads
+30/39 = 76.9 % against an unchanged 0.70 floor. What thinning itself guarantees, that the first and
+last punch survive, became a separate test.
+
+**Also worth recording:** `MAX_RECORDED_TRAVEL_M` now excludes nothing. Shorter combinations each
+carry far less of their own recorded travel — the library tops out at 0.78 m against a 1.2 m
+threshold — so the constant is retained as a guard rather than as an active filter, and its
+docstring records the re-derivation.

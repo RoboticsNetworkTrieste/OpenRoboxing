@@ -125,8 +125,8 @@ def test_committing_with_a_combination_but_no_ghost_is_rejected() -> None:
 
 
 # --- the spec pairing -------------------------------------------------------------------------
-def test_the_spec_is_versioned_at_3_1() -> None:
-    assert SPEC_VERSION == "3.1"
+def test_the_spec_is_versioned_at_3_2() -> None:
+    assert SPEC_VERSION == "3.2"
     spec = Path(OPENROBOXING_ROOT / "spec/intent.md").read_text()
     assert re.search(rf"Version \*\*{re.escape(SPEC_VERSION)}\*\*", spec), (
         "spec/intent.md does not declare the version runtime/intents.py implements"

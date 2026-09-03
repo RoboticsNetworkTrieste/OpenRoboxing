@@ -1,4 +1,4 @@
-"""CombinationRecord: validation and JSON round trip. Implements spec/combination.md 0.1."""
+"""CombinationRecord: validation and JSON round trip. Implements spec/combination.md 0.2."""
 
 from __future__ import annotations
 

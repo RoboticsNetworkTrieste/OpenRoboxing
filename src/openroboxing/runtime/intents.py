@@ -122,7 +122,7 @@ if TYPE_CHECKING:  # `runtime` does not import `studio` at module level - see ge
 
 #: The `spec/intent.md` version this module implements. The test that pairs them is what caught
 #: 2.0 shipping without a changelog entry, so the two move together or not at all.
-SPEC_VERSION = "3.1"
+SPEC_VERSION = "3.2"
 
 
 class IntentError(RuntimeError):

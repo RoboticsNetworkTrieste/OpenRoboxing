@@ -1,6 +1,6 @@
 """The combination record: load, validate, save (M5-T7).
 
-Implements ``spec/combination.md`` v0.1.
+Implements ``spec/combination.md`` v0.2.
 
 Conventions
 -----------
@@ -36,7 +36,13 @@ from openroboxing.spec.constants import (
 from openroboxing.studio import segment
 from openroboxing.studio.pose_record import ADMISSION_STATES
 
-SCHEMA_VERSION = "0.1"
+SCHEMA_VERSION = "0.2"
+"""Bumped from 0.1 at `spec/intent.md` 3.2. The *fields* are unchanged, but the constraints on them
+are not: a combination is 2-3 keyframes rather than 3-6, and `leg_tokens` runs to
+`MAX_TARGET_LEG_TOKENS` rather than `MAX_TOKENS`. A 0.1 record is therefore not loadable as a 0.2
+one, and the version check is what says so plainly instead of letting validation report a confusing
+"6 keyframes, expected 2-3".
+"""
 
 
 class CombinationError(ValueError):

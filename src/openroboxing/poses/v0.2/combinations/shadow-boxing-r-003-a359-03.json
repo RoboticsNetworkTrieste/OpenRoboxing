@@ -127,7 +127,7 @@
     -0.010466833114624041
   ],
   "recorded_heading_delta": 0.09475262926309203,
-  "schema_version": "0.1",
+  "schema_version": "0.2",
   "source": {
     "end_frame": 802,
     "mirrored": false,

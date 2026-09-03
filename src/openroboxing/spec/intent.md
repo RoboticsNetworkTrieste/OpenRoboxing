@@ -1,17 +1,18 @@
 # intent.md — the staged-intent model
 
-Version **3.1** · created 2026-08-07 · formalised 2026-08-07 by `M2-T4` · remodelled 2026-08-08 ·
+Version **3.2** · created 2026-08-07 · formalised 2026-08-07 by `M2-T4` · remodelled 2026-08-08 ·
 one continuous intent 2026-08-13 · aimed a leg at a time, and ended by the move rather than by a
 counter, 2026-08-17 · **a commit is a combination, and the approach is gone, 2026-08-28** · `D6`
 lands and `Loadout` is deleted, 2026-08-28 (`M6` Phase 3, task A6) · **a fighter always faces its
-opponent, 2026-09-03 (owner), reversing D5's recorded heading**
+opponent, 2026-09-03 (owner), reversing D5's recorded heading** · **the keyframe is pinned in
+absolute time and the hole in front of it shrinks, 2026-09-03 (owner)**
 
 Defines how a player's action reaches the generator. This is a cross-boundary structure
 (`CLAUDE.md` invariant 7), so it is specified before `runtime/intents.py` is rewritten against it.
 
 Status: the model is decided — by the project owner,
 `docs/superpowers/specs/2026-08-27-motion-combinations-design.md`, decisions D1–D6 — and is
-implemented. `runtime/intents.py` reads `SPEC_VERSION = "3.1"` (`M6-T5`, 3.1 in the 2026-09-03 fix); a test pairs this file's
+implemented. `runtime/intents.py` reads `SPEC_VERSION = "3.2"`; a test pairs this file's
 version with that constant.
 
 **`D6` — no loadout: the whole library shared and paged, nine combinations at a time — is
@@ -46,8 +47,8 @@ keyframe, and does not replace the schema they use.
 
 ## The player's loop
 
-1. **Select a combination** — 3–6 recorded key poses with recorded timing (`spec/combination.md`
-   0.1), from a library of ~120 built from the mocap corpus under `motions/`. Both fighters carry
+1. **Select a combination** — 2–3 recorded key poses with recorded timing (`spec/combination.md`
+   0.2), from a library of 174 built from the mocap corpus under `motions/`. Both fighters carry
    the whole library and page through it nine at a time (`D6`) — there is no per-seat loadout to
    select from first. This replaces "select a pose": the unit of selection is no longer one key
    pose.
@@ -100,7 +101,7 @@ because the phase that used to be open-ended no longer is:
 | staging | selecting / placing the ghost | unbounded — happens during play |
 | `COMMIT_HORIZON_TICKS` | commit → execution, as a minimum | 30 ticks = 0.6 s — inert, see below |
 | reference lookahead | commit → execution, in practice | 65 ticks = 1.3 s |
-| combination | the whole move, position to ghost | **`record.duration_ticks`, fixed by the recording** — 2–5 legs of 0.8–2.13 s each (`COMBINATION_MIN/MAX_KEYFRAMES`, `MIN/MAX_TOKENS`), so 1.6–10.67 s |
+| combination | the whole move, position to ghost | **`record.duration_ticks`, fixed by the recording** — 1–2 legs of 0.8–3.2 s each (`COMBINATION_MIN/MAX_KEYFRAMES`, `MIN_TOKENS`–`MAX_TARGET_LEG_TOKENS`); measured 0.93–6.00 s over the rebuilt library, median 3.87 s |
 | `MAX_OUTSTANDING_COMMITS` | how many may be unfinished at once | **5**, unchanged |
 
 The approach row from 2.2 is simply gone: there is no phase left in this table that is open-ended,
@@ -231,32 +232,61 @@ ghost 1 m to the side is reached as well as one 1 m ahead — **0.79 m either wa
 and the mechanism 3.0 uses are different enough that the same clip is safe for one and was not for
 the other.
 
-### Forced plan lengths are back, and that has a cost
+### The keyframe is pinned; the hole in front of it shrinks
 
-2.0 moved deliberately to `horizon_tokens=None` — "the model picks its own length" — because forcing
-a plan length and binding it to a commit needed machinery (`_plan_key`, `_committed_plan_length`,
-`MAX_HELD_STRIKE_FRAMES`) that produced three measured defects, recorded in full in
-`runtime/reference.py`'s module docstring:
+**Owner framing, 2026-09-03:** *time in MotionBricks is a continuous array that has to be filled
+where there are holes, and the keyframes you put in it stay in place while the array moves forward.*
 
-1. an 8-token pose losing its final frame — the authored pose — on 20 % of tick alignments;
-2. that lost frame then playing into the *next* commit's approach;
-3. the end-of-strike replan bypassing the ambient replan cadence.
+That is the model, and 3.0 through 3.1 violated it. MotionBricks fills a hole between its 4 context
+frames and a target at the plan's last token. `CombinationRunner.intent_for` asked for
+`leg.horizon_tokens` — the leg's **full** length — on every replan, so the target was re-aimed
+`REPLAN_DT × GENERATOR_HZ` = 15 frames further out each time. A 12-token leg put its keyframe at
+frame 48, then 63, then 78:
 
-**3.0 forces plan lengths again, on purpose, because that is what makes duration hold.** A
-combination's whole premise — that its length is knowable in advance (see "A commit's span," above)
-— is only true if each leg's plan is forced to `leg.horizon_tokens` and consumed exactly, the same
-contract 2.0 removed. `runtime/warp.py` and `runtime/sequence.py` already produce and consume that
-contract per leg — `CombinationRunner` advances on recorded ticks, not on watching a body settle —
-so the forced-plan machinery 2.0 deleted has to come back, scoped to one leg rather than one whole
-commit.
+| replan at frame | requested | keyframe lands at |
+|---|---|---|
+| 0 | 12 tokens | 48 |
+| 15 | 12 tokens | 63 |
+| 30 | 12 tokens | 78 |
 
-**The cost is the same three defects, reintroduced along with the mechanism that caused them.**
-`M6-T6` writes them as explicit regression tests rather than trusting that per-leg forcing avoids
-what per-commit forcing did not:
+The keyframe **receded and never arrived at its boundary**. The fighter converged on it — which is
+why holding a pose worked at all — but the recorded rhythm was stretched and the pose only ever
+partially attained. This is the "motions broken in pieces" defect the owner reported.
 
-1. a leg losing its final frame on some tick alignments;
-2. a lost frame playing into the next leg (or, at a combination's last leg, into the next commit);
-3. an end-of-leg replan bypassing `REPLAN_DT`.
+3.2 asks for the hole that is actually left: `ceil(boundary_tick − tick)` in tokens. The keyframe
+stays pinned in absolute time while the window slides and consumed frames are discarded. Three
+regimes follow, each meaning something different:
+
+| remaining hole | behaviour | why |
+|---|---|---|
+| `> MAX_TOKENS` | request `MAX_TOKENS`, **no pose target** | the keyframe is not reachable inside one plan, so nothing is aimed at it: ambient `walk_boxing` shaped only by the leg's `target_position` |
+| `MIN_TOKENS`–`MAX_TOKENS` | request the remainder, keyframe as target | the real in-between; where the recorded pose lands |
+| `< MIN_TOKENS` | **do not replan at all** | no plan that short exists, so re-filling would only push the keyframe past its own boundary |
+
+**`ceil`, not `round`, and it is load-bearing.** A plan ending short of its boundary leaves the play
+cursor clamped on its last frame, and `get_context_mujoco_qpos` then returns four copies of it
+(`full_agent.py:503-521`) — a zero-velocity context telling the model the fighter is standing still
+while it is mid-combination. `ceil` guarantees the plan always reaches at least the boundary,
+overshooting by less than one token, which the next leg's replan writes over.
+`tests/test_reference_replan_flag.py` asserts the context never collapses, and is verified to fail
+under `floor`.
+
+**This withdraws 3.0's "consumed exactly" contract.** That contract was specified and never
+implemented: only the forcing half was built, and `tests/test_reference_forced_length.py` explicitly
+asserts no replan is ever forced. 3.2 delivers the same guarantee — a leg lasts its recorded
+duration — through a mechanism that forces nothing, so all three of those regression tests keep
+passing unchanged. The three defects 3.0 feared are not reintroduced, because the machinery that
+caused them is not reintroduced.
+
+### A leg is no longer a plan
+
+The corollary, and the change with the widest blast radius. Until 3.2 `leg_tokens ≤ MAX_TOKENS` held
+**because a leg was exactly one plan**. A long leg is now an untargeted phase *plus* a landing plan,
+so `MAX_TOKENS` bounds a **plan** and `MAX_TARGET_LEG_TOKENS` (24 tokens, 3.2 s) bounds a **leg**.
+Three places enforced the old identity and all three moved: `segment.leg_tokens`' raise *and its
+`min(MAX_TOKENS, …)` clamp*, and `combination_record`'s validator. The clamp was the dangerous one —
+left alone it silently truncates every merged leg back to 16 tokens and the library looks rebuilt
+while being unchanged.
 
 ### A queue, bounded, in order — unchanged
 
@@ -452,6 +482,17 @@ absence:
 ---
 
 ## Changelog
+
+- **3.2** (2026-09-03) — **a keyframe is pinned in absolute time.** `intent_for` requested the leg's
+  full length on every replan, so the target was re-aimed 15 frames further out each time and never
+  landed on its boundary — the "motions broken in pieces" defect. It now requests
+  `ceil(boundary − tick)` in tokens, drops the pose target while the hole exceeds `MAX_TOKENS`, and
+  stops replanning below `MIN_TOKENS` so the last plan lands exactly. **Withdraws 3.0's "consumed
+  exactly" contract**, which was specified but never implemented; the same guarantee is met by a
+  mechanism that forces nothing, so `tests/test_reference_forced_length.py` passes unchanged.
+  A leg is no longer one plan, so `MAX_TOKENS` stops bounding a leg and `MAX_TARGET_LEG_TOKENS`
+  does. The library is rebuilt on sparse targets: 174 combinations of 2–3 keyframes, median leg
+  15 tokens (2.00 s) against 9 (1.20 s), 39 % of legs now longer than one plan.
 
 - **3.1** (2026-09-03) — **a fighter always faces its opponent.** Owner decision, reversing the half
   of `D5` that said where a derived heading points (the half that says the player never sets it
