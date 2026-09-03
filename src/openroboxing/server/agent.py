@@ -218,8 +218,10 @@ class BaselineAgent:
 
         Optional in the :class:`Agent` protocol — an agent that does not care never defines it. This
         one does, because every choice it makes reads straight off what a client would show a human:
-        ``name``, ``reach_m`` and ``heading_delta`` per entry (`spec/intent.md`'s `D6`: the whole
-        library, not a per-seat loadout, so there is nothing to be dealt).
+        ``name`` and ``reach_m`` per entry (`spec/intent.md`'s `D6`: the whole library, not a
+        per-seat loadout, so there is nothing to be dealt). Not ``heading_delta`` — since
+        `spec/intent.md` 3.1 a fighter faces its opponent whatever the recording turns by, so a
+        combination's recorded turn is not something to choose on.
         """
         self._library = {
             str(c["name"]): dict(c) for c in message.get("combinations") or []

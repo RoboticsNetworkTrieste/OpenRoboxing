@@ -116,3 +116,42 @@ def test_every_library_combination_ends_where_its_record_says():
         legs = warp.warp(rec, (0.0, 0.0), 0.0, rec.recorded_displacement)
         run = sequence.CombinationRunner(rec, legs, commit_at=17)
         assert run.end_tick == 17 + rec.duration_ticks
+
+
+# --- the live bearing (owner, 2026-09-03: a fighter always faces its opponent) --------------------
+def test_a_supplied_bearing_overrides_the_recorded_heading():
+    """The reversal of design D5. Both signals the generator aims with move: the *target frame's*
+    heading and the facing direction. The recorded turn no longer decides where a fighter looks."""
+    run, _ = runner([6, 8, 6])
+    recorded = run.legs[0].facing_angle
+    intent = run.intent_for(0, facing_angle=1.25)
+
+    assert recorded != pytest.approx(1.25), "the fixture must not accidentally record the bearing"
+    assert intent.facing_angle == pytest.approx(1.25)
+    assert intent.target_heading == pytest.approx(1.25)
+
+
+def test_a_still_legs_travel_follows_the_supplied_bearing():
+    """A leg that does not travel has no direction of its own, so it inherits the one the fighter
+    is actually facing - which is now the bearing, not the recording (`warp.STILL_LEG_M`)."""
+    keyframes = [cr.Keyframe(dict(ANGLES), None, (0.0, 0.0), 0.0)]
+    for token in (6, 6):
+        keyframes.append(cr.Keyframe(dict(ANGLES), token, (0.0, 0.0), 0.9))
+    rec = cr.CombinationRecord(
+        name="still", library_version="v0.2",
+        source=cr.CombinationSource("t", 0, 100, False), keyframes=keyframes,
+    )
+    legs = warp.warp(rec, (0.0, 0.0), 0.0, (0.0, 0.0))
+    assert all(leg.is_still for leg in legs), "the fixture must stand still to mean anything"
+
+    intent = sequence.CombinationRunner(rec, legs, commit_at=0).intent_for(0, facing_angle=1.25)
+    assert intent.movement_angle == pytest.approx(1.25)
+
+
+def test_without_a_bearing_the_recording_still_decides():
+    """Off the bench there is no opponent - the Studio's rehearsal and the warp tools drive a lone
+    fighter - so the recorded heading is what a runner falls back to, and nothing silently zeroes."""
+    run, _ = runner([6, 8, 6])
+    intent = run.intent_for(0)
+    assert intent.facing_angle == pytest.approx(run.legs[0].facing_angle)
+    assert intent.target_heading == pytest.approx(run.legs[0].target_heading)

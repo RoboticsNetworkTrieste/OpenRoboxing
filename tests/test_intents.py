@@ -77,7 +77,7 @@ def _drive(timeline: IntentTimeline, through: int, *, start: int = 0) -> None:
 
 # --- the spec pairing (kept: this is the test that catches a version bump without a rewrite) -----
 def test_the_spec_is_versioned() -> None:
-    assert SPEC_VERSION == "3.0"
+    assert SPEC_VERSION == "3.1"
     spec = Path(OPENROBOXING_ROOT / "spec/intent.md").read_text()
     assert re.search(rf"Version \*\*{re.escape(SPEC_VERSION)}\*\*", spec), (
         "spec/intent.md does not declare the version runtime/intents.py implements"

@@ -155,9 +155,9 @@ legal and means "fire whatever was last staged".
 **0.6 collapses 0.4's separate `stage` (which slot) and `place` (where, with a player-set heading)
 into one `intent` message.** `spec/intent.md` 3.0's `D6`/`D5` removed both of the reasons they needed
 to be two: a combination has no slot to name — it is selected by name, from the whole shared library
-— and its ghost carries no heading any more, since the ghost's heading is *derived* (the fighter's own
-heading plus the combination's recorded turn) and never player-set. There is exactly one thing left to
-stage, not two, so there is exactly one message.
+— and its ghost carries no heading any more, since the ghost's heading is *derived* (since
+`spec/intent.md` 3.1: the bearing to the opponent) and never player-set. There is exactly one thing
+left to stage, not two, so there is exactly one message.
 
 `ghost` is **absolute** MuJoCo world `(x, y)` — the position the client's own shadow, drawn and moved
 entirely in the browser (see §The shadow), has already been dragged to. The host never sees the
@@ -265,11 +265,14 @@ that asked the server where to stand before it could move would be unusable, and
 not the server's business.
 
 **Position only, since 0.6.** Before `spec/intent.md` 3.0 a placement carried a player-set `heading`
-too; a ghost's heading is now *derived* — the fighter's own heading plus the combination's recorded
-turn (`runtime/warp.py::ghost_heading`) — and is never chosen by the player (design `D5`, because the
-corpus's travelling combinations turn by up to 158° and a target-facing ghost would discard that
-turn). The client may still compute and draw the derived heading for its own preview, but it has
-nothing to send the host about it.
+too; a ghost's heading is *derived* and never chosen by the player (design `D5`). **Since
+`spec/intent.md` 3.1 (owner, 2026-09-03) it is derived by facing the opponent**:
+`runtime/warp.py::ghost_heading(ghost_position, opponent_position)`, and the host re-measures the
+same bearing live on every tick for the move it actually runs. 3.0 derived it from the combination's
+recorded turn instead, which left a fighter ending a turning combination with its back to the
+opponent. The client draws the same bearing for its own preview — both pelvis positions are already
+in the binary frame, so it needs nothing new on the wire, and it still has nothing to send the host
+about heading.
 
 `anchor` is **where a commit issued right now would start from**: the last queued commit's ghost — a
 combination's whole premise is that its final keyframe lands exactly there — or the fighter's current
@@ -369,7 +372,8 @@ lands*, and does not advantage either seat.
   `intent` message (`{"combination": ..., "ghost": [x, y]}`) — a combination has no slot to name and
   its ghost has no heading to carry any more (`D5`/`D6`). `welcome` drops the per-seat `loadout` and
   ships `combinations`: the whole shared library, sorted by name, one entry per combination carrying
-  `seconds`, `heading_delta`, a per-combination `reach_m`, and the *final keyframe's* `pose` — because
+  `seconds`, `heading_delta` (which describes the recording; since `spec/intent.md` 3.1 it no longer
+  drives the ghost's heading), a per-combination `reach_m`, and the *final keyframe's* `pose` — because
   under `D6` there is no loadout left to be secret, a spectator's `welcome` now carries exactly what a
   seat's does. `reach_m` replaces 1.1's retired assumption that anywhere in the ring is reachable: a
   combination's duration is fixed by its recording, so how far its ghost may sit from the anchor is

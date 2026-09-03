@@ -181,6 +181,11 @@ def welcome(
     duration is fixed by its recording (unlike 1.1-2.2's open-ended approach, where anywhere in the
     ring was reachable and distance only cost time), how far its ghost may be placed differs move to
     move — see :func:`reach_m`.
+
+    ``heading_delta`` describes the *recording* — how far the combination turns end to end — and is
+    the one entry here nothing aims with: since `spec/intent.md` 3.1 a fighter faces its opponent,
+    and both the client's ghost and the host's own target frame derive that bearing from the two
+    pelvis positions they already have. It stays on the wire because it describes the move.
     """
     combinations = [
         {

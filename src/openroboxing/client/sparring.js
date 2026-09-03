@@ -14,8 +14,9 @@
  * The player used to pick one of a loadout's six poses (`1`-`6`), place it with a heading, and the
  * fighter walked there. A commit is now a **combination** — 3-6 recorded keyframes with recorded
  * timing — selected from the whole shared ~120-move library (`D6`, `client/app.js`'s picker), and
- * the ghost is **position only**: heading is derived from the fighter's own heading plus the
- * combination's recorded turn (`D5`), never chosen. `stage`/`place` collapsed into one `intent`
+ * the ghost is **position only**: heading is derived, never chosen (`D5`), and since the owner's
+ * 2026-09-03 rule it is derived by facing the sacco rather than from the combination's recorded turn
+ * (`spec/intent.md` 3.1). `stage`/`place` collapsed into one `intent`
  * message (`spec/protocol.md` 0.6), and this file follows that collapse rather than keeping its own
  * copy of the old pair.
  */
@@ -368,15 +369,16 @@ function shadowPosition() {
   return { x: clamp(S.anchor.x + S.offset.x), y: clamp(S.anchor.y + S.offset.y) };
 }
 
-/* Heading is not a control (`D5`, spec/intent.md "The ghost"): it is *derived* — the fighter's own
-   current heading (read off the streamed pelvis transform) plus the staged combination's own
-   recorded turn. A combination can turn by up to 158°, and a ghost that instead faced the sacco (as
-   0.1-0.2 did) would discard the turn that *is* the motion. Nothing here is sent to the host — this
-   is a preview only, the same role `client/app.js`'s `ghostHeading` plays for a match. */
-function ghostHeading() {
-  const combo = S.staged ? S.combinationsByName[S.staged] : null;
-  if (!combo) return 0;
-  return ring.fighterHeading('red') + combo.heading_delta;
+/* Heading is not a control (spec/intent.md "The ghost"): it is *derived*, and since the owner's
+   2026-09-03 rule it is derived by facing the sacco — a fighter always faces what it is boxing, so
+   the recording's own turn no longer decides where the ghost looks. Both positions are read off the
+   streamed pelvis transforms. Nothing here is sent to the host — this is a preview only, the same
+   role `client/app.js`'s `ghostHeading` plays for a match, and the host re-derives the same angle
+   live on every tick (`runtime/fight.py::FightWorld.facing_angle`). */
+function ghostHeading(at) {
+  const sacco = ring.fighterPosition('blue');
+  if (!sacco) return ring.fighterHeading('red');
+  return Math.atan2(sacco.y - at.y, sacco.x - at.x);
 }
 
 /* Since spec/intent.md 3.0 a combination's duration is fixed by its recording, so how far its ghost
@@ -423,7 +425,7 @@ function driveShadow(dt) {
   if (!at || !combo) { ring.hideShadow('red'); drawReach(null); return; }
 
   const reach = reachInfo(at);
-  ring.showShadow('red', at.x, at.y, ghostHeading(), combo.pose, S.standHeight, reach?.rejected);
+  ring.showShadow('red', at.x, at.y, ghostHeading(at), combo.pose, S.standHeight, reach?.rejected);
   drawReach(reach);
 }
 

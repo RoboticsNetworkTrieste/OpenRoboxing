@@ -26,6 +26,12 @@ Conventions
 - ``facing_angle`` is where the fighter looks and comes from the **recording**. ``movement_angle`` is
   where it travels and comes from the **warped** displacement. They are different signals and the
   difference selects the gait (`CLAUDE.md`).
+- **In a fight, nothing here decides where a fighter looks.** Owner, 2026-09-03: a fighter always
+  faces its opponent, so ``runtime/sequence.py`` overrides both a leg's ``facing_angle`` and its
+  ``target_heading`` with the live bearing the world measures each tick, and a still leg's
+  ``movement_angle`` follows that bearing too (``is_still``). The recorded heading below is what a
+  lone fighter falls back to — the Studio's rehearsal and the warp tools, where there is no
+  opponent to face — never a silent default.
 - Nothing is clamped. With a ``speed_ceiling`` set, a ghost the combination cannot reach in its
   recorded duration raises; with ``speed_ceiling=None`` there is no ceiling and no raise, and the
   fighter runs whatever drift landing on the ghost takes (owner, 2026-08-28).
@@ -72,6 +78,7 @@ class Leg:
     horizon_tokens: int
     movement_angle: float
     facing_angle: float
+    is_still: bool
 
 
 def warp(
@@ -161,15 +168,26 @@ def warp(
                 horizon_tokens=int(keyframes[index].leg_tokens or 0),
                 movement_angle=math.atan2(step[1], step[0]) if moving else facing,
                 facing_angle=facing,
+                is_still=not moving,
             )
         )
     return legs
 
 
-def ghost_heading(record: CombinationRecord, anchor_heading: float) -> float:
-    """Where the ghost faces: the fighter's heading plus the combination's recorded turn.
+def ghost_heading(
+    ghost_position: tuple[float, float], opponent_position: tuple[float, float]
+) -> float:
+    """Where the ghost faces: **at the opponent**, from wherever the ghost stands.
 
-    Derived, never chosen, and never aimed at a target (design D5). The travelling takes turn by up
-    to 158 degrees, and a ghost that faced the target would discard the turn that *is* the motion.
+    Derived, never chosen (that part of design D5 stands), but no longer derived from the recording.
+    **Owner, 2026-09-03**, reversing the rest of D5: a fighter is always turned towards the fighter
+    it is boxing, so a combination's own recorded turn does not decide where it looks — a ghost that
+    inherited a 158 degree turn faced the ropes, which is not a thing a boxer does.
+
+    A preview and a record, not a control: what the fighter actually faces while the combination
+    runs is re-derived every tick from the opponent's live position
+    (``runtime/fight.py::FightWorld.facing_angle``), because the opponent moves while it runs.
     """
-    return anchor_heading + record.recorded_heading_delta
+    return math.atan2(
+        opponent_position[1] - ghost_position[1], opponent_position[0] - ghost_position[0]
+    )

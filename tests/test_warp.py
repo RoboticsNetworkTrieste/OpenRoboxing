@@ -127,9 +127,20 @@ def test_legs_carry_their_recorded_pose_and_length():
     assert legs[0].joint_angles == ANGLES
 
 
-def test_ghost_heading_is_the_recorded_turn():
-    rec = record([(0.1, 0.0), (0.2, 0.0)], [0.3, 0.7], [6, 6])
-    assert warp.ghost_heading(rec, 1.0) == pytest.approx(1.7)
+def test_the_ghost_faces_the_opponent():
+    """Owner, 2026-09-03: a fighter always faces its opponent, so the ghost does too - the
+    recording's own turn no longer decides where it looks (the reversal of design D5)."""
+    assert warp.ghost_heading((1.0, 0.0), (3.0, 0.0)) == pytest.approx(0.0)
+    assert warp.ghost_heading((1.0, 0.0), (1.0, 2.0)) == pytest.approx(math.pi / 2)
+
+
+def test_a_still_leg_says_so():
+    """The flag the runtime needs: a leg that does not travel has no direction of its own, so
+    whoever supplies the live bearing must know to point its movement there too."""
+    rec = record([(0.0, 0.0), (0.3, 0.0)], [0.0, 0.0], [6, 6])
+    legs = warp.warp(rec, (0.0, 0.0), 0.0, (0.3, 0.0))
+    assert legs[0].is_still
+    assert not legs[1].is_still
 
 
 def test_every_library_combination_places_at_a_reachable_ghost():

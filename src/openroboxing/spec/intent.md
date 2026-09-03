@@ -1,16 +1,17 @@
 # intent.md — the staged-intent model
 
-Version **3.0** · created 2026-08-07 · formalised 2026-08-07 by `M2-T4` · remodelled 2026-08-08 ·
+Version **3.1** · created 2026-08-07 · formalised 2026-08-07 by `M2-T4` · remodelled 2026-08-08 ·
 one continuous intent 2026-08-13 · aimed a leg at a time, and ended by the move rather than by a
 counter, 2026-08-17 · **a commit is a combination, and the approach is gone, 2026-08-28** · `D6`
-lands and `Loadout` is deleted, 2026-08-28 (`M6` Phase 3, task A6)
+lands and `Loadout` is deleted, 2026-08-28 (`M6` Phase 3, task A6) · **a fighter always faces its
+opponent, 2026-09-03 (owner), reversing D5's recorded heading**
 
 Defines how a player's action reaches the generator. This is a cross-boundary structure
 (`CLAUDE.md` invariant 7), so it is specified before `runtime/intents.py` is rewritten against it.
 
 Status: the model is decided — by the project owner,
 `docs/superpowers/specs/2026-08-27-motion-combinations-design.md`, decisions D1–D6 — and is
-implemented. `runtime/intents.py` reads `SPEC_VERSION = "3.0"` (`M6-T5`); a test pairs this file's
+implemented. `runtime/intents.py` reads `SPEC_VERSION = "3.1"` (`M6-T5`, 3.1 in the 2026-09-03 fix); a test pairs this file's
 version with that constant.
 
 **`D6` — no loadout: the whole library shared and paged, nine combinations at a time — is
@@ -51,9 +52,9 @@ keyframe, and does not replace the schema they use.
    select from first. This replaces "select a pose": the unit of selection is no longer one key
    pose.
 2. **Place the ghost** — drag it to where the combination's **last keyframe** should land: position
-   only, world coordinates. There is no heading control any more — the ghost's heading is derived
-   from the fighter's own heading and the combination's recorded turn, never chosen (see "The
-   ghost", below).
+   only, world coordinates. There is no heading control any more — the ghost's heading is derived,
+   never chosen, and since 3.1 what it is derived from is the **opponent**: a fighter always faces
+   the fighter it is boxing (see "The ghost", below).
 3. **Commit.** The plan is queued. The fighter runs the combination **starting from wherever it
    actually is** the tick the move begins — no approach, no walk to a start — and its recorded
    footwork carries it while whatever residual distance is left over to the ghost is added as an
@@ -309,10 +310,14 @@ Two channels are gone outright:
 
 ### Ghost heading is derived, not staged
 
-`Placement.heading` is gone as a player-set field (see "Removed at 3.0"). The ghost's heading is
-computed by `runtime/warp.py::ghost_heading` — the fighter's current heading plus the combination's
-`recorded_heading_delta`, and per keyframe `heading_i = h₀ + heading_offset_i` — and the player never
-sets it directly. See "The ghost", below, for why.
+`Placement.heading` is gone as a player-set field (see "Removed at 3.0"), and the player never sets a
+heading directly. **Since 3.1 it is derived by facing the opponent** (owner, 2026-09-03):
+`runtime/warp.py::ghost_heading(ghost_position, opponent_position)` is the bearing from the ghost to
+the opponent, and while the combination runs the same bearing is re-measured **every tick** from the
+opponent's live position (`runtime/fight.py::FightWorld.facing_angle`) and used for both headings
+that reach MotionBricks — the target frame's `target_heading` and the `facing_angle` control signal.
+3.0 derived it from the recording instead (`h₀ + recorded_heading_delta`, per keyframe
+`heading_i = h₀ + heading_offset_i`); see "The ghost", below, for what that cost.
 
 ### Coordinates, unchanged
 
@@ -331,17 +336,23 @@ implementation of "what this move looks like" would be free to disagree with the
 happens.
 
 **What changed is what the player controls.** Before 3.0 the player set both the ghost's position
-and its heading. Now the player drags **position only** (D5): the heading is derived, and dragging
-the ghost to a new position moves where the *last keyframe* lands without changing which way the
-fighter ends up facing relative to how it started.
+and its heading. The player drags **position only** (D5): the heading is derived, and dragging the
+ghost to a new position moves where the *last keyframe* lands without the player ever aiming it.
 
-**Why heading is derived and never chosen — restated from D5, because it is easy to get backwards.**
-The corpus's travelling combinations turn by up to **158°** end to end. A ghost that always faced the
-target, the way 1.0–2.2's placement did, would discard that turn — it is not incidental to the
-motion, it *is* the motion, the same sense in which a hook's whole point is that the fist does not
-travel in a straight line. `facing_angle` (where the fighter looks) and `movement_angle` (where it
-travels) are different signals per leg — `CLAUDE.md`'s named trap — and here the difference is not a
-bug to avoid but the content of the recording.
+**Where the derived heading points — reversed at 3.1 (owner, 2026-09-03).** It points at the
+opponent, from wherever the fighter is, on every tick. 3.0 derived it from the recording instead, on
+D5's reasoning that the corpus's travelling combinations turn by up to **158°** and a target-facing
+ghost would discard the turn that *is* the motion. That reasoning holds for the *recording* and
+fails for the *fight*: a boxer is turned towards the fighter they are boxing at all times, and a
+fighter that inherits a recorded 158° turn ends the move facing the ropes with its back to the
+opponent, which is worse than any turn it preserves. So the recorded turn still moves the body — it
+is in the keyframe joint angles and in the footwork — it just no longer aims the fighter.
+
+`facing_angle` (where the fighter looks) and `movement_angle` (where it travels) are still different
+signals per leg — `CLAUDE.md`'s named trap — and the difference is now larger, not smaller: travel
+comes from the warped footwork, facing comes from the opponent. Only a leg that does not travel at
+all (`warp.STILL_LEG_M`) takes the bearing as its movement direction too, having no direction of its
+own.
 
 **The opponent never sees it.** Unchanged from 1.0: `WORKPLAN` M4-T1's "no HUD on the fighters — the
 windup is the only cue" is unaffected — staging is private, and a committed move becomes public only
@@ -393,7 +404,7 @@ only to serve the approach or the counted dwell, both gone.
 | `has_settled` | nothing needed: `end_tick = commit_at + record.duration_ticks` |
 | the counted dwell, `POSE_DWELL_TICKS` | the combination's own recorded pauses — legs with a small or zero `root_offset` are authored motion, not a wait |
 | `MAX_DWELL_TICKS` | nothing needed: nothing can hang, because nothing is being waited for |
-| `Placement.heading` as a player-set field | `runtime/warp.py::ghost_heading` — derived, never chosen (D5) |
+| `Placement.heading` as a player-set field | `runtime/warp.py::ghost_heading` — derived, never chosen (D5); since 3.1 derived by facing the opponent |
 | the per-commit `slot` / `adjustment` as the unit of selection | the per-commit `combination` (a `CombinationRecord`) plus its anchor — see "Channels" |
 
 `arrived` and `completed_by` go with the fields they distinguished, for the same reason: there is
@@ -442,6 +453,21 @@ absence:
 
 ## Changelog
 
+- **3.1** (2026-09-03) — **a fighter always faces its opponent.** Owner decision, reversing the half
+  of `D5` that said where a derived heading points (the half that says the player never sets it
+  stands). Both headings that reach MotionBricks — the *target frame's* `target_heading` and the
+  `facing_angle` control signal — are the bearing to the opponent, measured in the world and
+  re-measured every tick, because the opponent moves while a 2.4–7.6 s combination runs. A leg's
+  recorded heading is no longer what a fighter looks along; it survives only where there is no
+  opponent to face (the Studio's rehearsal, the warp tools), and `runtime/sequence.py`'s
+  `CombinationRunner.intent_for(tick, facing_angle)` is the single place the override happens. A
+  still leg (`warp.STILL_LEG_M`) takes the bearing as its `movement_angle` too. `ghost_heading` now
+  takes the ghost and the opponent's positions rather than a record and a heading, and the clients
+  draw the same bearing for their preview (`client/app.js`, `client/sparring.js` via
+  `ring.fighterPosition`). What did *not* change: the wire (`spec/protocol.md` stays 0.6 — `welcome`
+  still carries each combination's `heading_delta`, which describes the recording and no longer
+  drives a preview), the warp's geometry, the queue, and the rule that the player never sets a
+  heading. `SPEC_VERSION` moves to `"3.1"`; the tests that pair the two move with it.
 - **3.0** (2026-08-28) — **a commit is a combination, and the approach is gone.** Replaces the single
   authored key pose with a 3–6-keyframe recorded combination (`spec/combination.md` 0.1) selected
   from a library of ~120 built from the mocap corpus under `motions/`. A commit starts **in place**

@@ -14,10 +14,11 @@
  * that round-tripped to the server before it moved would be unusable to aim with. That is the one
  * piece of forward kinematics in the client, and it touches nothing the simulation owns.
  *
- * `fighterHeading` reads a second thing off the streamed transforms: the pelvis's own yaw, which is
- * the "fighter's own heading" half of the ghost's *derived* heading (`D5` — the other half, the
- * combination's `heading_delta`, comes from `welcome`). Not new kinematics — the same world
- * quaternion every other body already gets, read rather than only copied.
+ * `fighterHeading` and `fighterPosition` read two more things off those same streamed transforms:
+ * the pelvis's own yaw, and where it stands. Both serve the ghost's *derived* heading, which since
+ * the owner's 2026-09-03 rule is the bearing from the ghost to the **opponent's** pelvis. Not new
+ * kinematics — the same world transforms every other body already gets, read rather than only
+ * copied.
  *
  * Quaternions arrive MuJoCo `wxyz`; three.js wants `xyzw`. `setQuat` below is the only place in the
  * client where that difference exists.
@@ -372,10 +373,11 @@ export class Ring {
   }
 
   /* ---- the fighter's own heading ---------------------------------------------------------------- */
-  /* `spec/protocol.md` 0.6 / `D5`: a ghost's heading is *derived* — the fighter's own heading plus
-   * the selected combination's `heading_delta` — and is never a field the JSON carries (`position`
-   * is a bare `{x, y}`). The one place that heading exists at all is the pelvis's own streamed
-   * transform, so that is where this reads it from: the yaw of `${seat}_pelvis`'s world quaternion,
+  /* `spec/protocol.md` 0.6: a ghost's heading is *derived* — it faces the opponent (owner,
+   * 2026-09-03) — and is never a field the JSON carries (`position` is a bare `{x, y}`). This is the
+   * fallback for the frames before the opponent's body exists, and the fighter's own heading exists
+   * in exactly one place: the pelvis's own streamed transform. So that is where this reads it from —
+   * the yaw of `${seat}_pelvis`'s world quaternion,
    * by the *same* formula the host uses to read a live fighter's heading and a recorded take's
    * heading off a quaternion (`runtime/conventions.py::quat_wxyz_to_yaw`) — this is that formula
    * with the `wxyz` arguments relabelled to three.js's own `xyzw` quaternion fields, not a second
@@ -390,6 +392,19 @@ export class Ring {
     if (index < 0) return 0;
     const q = this.bodies[index].quaternion;   // three.js order: (x, y, z, w)
     return Math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z));
+  }
+
+  /* Where a fighter stands, world `(x, y)` — the same pelvis `fighterHeading` reads, and the same
+   * MuJoCo world frame the streamed floats are already in (`applyFrame` copies them straight in).
+   * The ghost aims at this: a fighter always faces its opponent (owner, 2026-09-03), so the shadow
+   * has to know where the opponent *is*, not merely which way this fighter is turned. `null` until
+   * the scene description has arrived and a first frame has been applied.
+   */
+  fighterPosition(seat) {
+    const index = this.bodyNames.indexOf(`${seat}_pelvis`);
+    if (index < 0) return null;
+    const at = this.bodies[index].position;
+    return { x: at.x, y: at.y };
   }
 
   /* ---- the shadow ------------------------------------------------------------------------------ */

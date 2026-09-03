@@ -7,9 +7,9 @@
  *
  * `D6` retired the six-slot loadout: a fighter carries the whole shared ~120-combination library,
  * and this page shows it nine at a time with prev/next paging (`GRID_SIZE`, §the picker below).
- * `D5` retired the player-set heading a placement used to carry: a ghost's heading is now *derived*
- * — the fighter's own heading plus the staged combination's `heading_delta` — and this file has
- * nothing to send the host about it (`ghostHeading` computes it only to draw the shadow).
+ * `D5` retired the player-set heading a placement used to carry: a ghost's heading is *derived*, and
+ * since the owner's 2026-09-03 rule it is derived by facing the opponent — this file has nothing to
+ * send the host about it (`ghostHeading` computes it only to draw the shadow).
  *
  * What the client owns
  * --------------------
@@ -61,6 +61,10 @@ const SEATS = {
 
 /* One page of the picker: a 3x3 grid (`D6`). 120 combinations makes 14 pages, the last one short. */
 const GRID_SIZE = 9;
+
+/* Who each seat is boxing. The ghost faces them (`ghostHeading`), which is the only thing this
+   client needs to know about the other seat's geometry. */
+const OPPONENT = { red: 'blue', blue: 'red' };
 
 /* How fast the ghost travels while a key is held, m/s. Fast enough to cross the ring in a couple of
    seconds, slow enough to place a punch. A UI number, not a physical one — it is how quickly you can
@@ -130,16 +134,17 @@ function reachInfo(seat, at) {
   return { metres, reach: combo.reach_m, seconds: combo.seconds, rejected: metres > combo.reach_m };
 }
 
-/* Heading is not a control (`D5`, spec/protocol.md 0.6 §"The shadow"): the ghost's heading is
-   *derived* — the fighter's own current heading (read off the streamed pelvis transform, since the
-   JSON carries no heading field any more) plus the staged combination's own recorded turn. A
-   combination can turn by up to 158°, and a ghost that instead faced the opponent would discard
-   the turn that *is* the motion. Nothing here is sent to the host — this is a preview only. */
-function ghostHeading(seat) {
-  const entry = state[seat];
-  const combo = entry?.staged ? entry.combinationsByName[entry.staged] : null;
-  if (!combo) return 0;
-  return ring.fighterHeading(seat) + combo.heading_delta;
+/* Heading is still not a control (spec/protocol.md 0.6 §"The shadow") — it is *derived* — but since
+   the owner's 2026-09-03 rule it is derived from the **opponent**, not from the recording: a fighter
+   always faces the fighter it is boxing, so the ghost points at where the opponent stands right now
+   (both read off the streamed pelvis transforms). The host derives the same angle for the move it
+   actually runs, live, on every tick (`runtime/fight.py::FightWorld.facing_angle`); nothing here is
+   sent to it — this is a preview only, and it falls back to the fighter's own heading for the frames
+   before the opponent's body exists in the scene. */
+function ghostHeading(seat, at) {
+  const opponent = ring.fighterPosition(OPPONENT[seat]);
+  if (!opponent) return ring.fighterHeading(seat);
+  return Math.atan2(opponent.y - at.y, opponent.x - at.x);
 }
 
 /* One 60 fps pass: move every ghost, redraw its cost, and hand the annotation layer what it needs.
@@ -168,7 +173,9 @@ function driveShadows(dt) {
     if (!at || !combo) { ring.hideShadow(seat); drawReach(seat, null); continue; }
 
     const reach = reachInfo(seat, at);
-    ring.showShadow(seat, at.x, at.y, ghostHeading(seat), combo.pose, standHeight, reach?.rejected);
+    ring.showShadow(
+      seat, at.x, at.y, ghostHeading(seat, at), combo.pose, standHeight, reach?.rejected,
+    );
     drawReach(seat, reach);
     if (reach) {
       plans.push({ seat, anchor: entry.anchor, ghost: at, metres: reach.metres, rejected: reach.rejected });

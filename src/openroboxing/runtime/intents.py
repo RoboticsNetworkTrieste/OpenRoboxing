@@ -1,6 +1,6 @@
 """The intent timeline: staging, committing, and the commit queue (M2-T4; rewritten M6-T5).
 
-Implements ``spec/intent.md`` v3.0 (:data:`SPEC_VERSION`).
+Implements ``spec/intent.md`` v3.1 (:data:`SPEC_VERSION`).
 
 The player is always steering a :class:`StagedIntent` — channels edited continuously while the fight
 runs, with no pause and no edit mode. Committing freezes whatever is staged at that instant into a
@@ -80,7 +80,8 @@ dwell to do. Removed in this rewrite: the approach itself, ``TRAVEL_CONTEXT``,
 ``approach_timeout_ticks`` / ``DEFAULT_APPROACH_TIMEOUT_TICKS``, ``has_arrived`` / ``has_settled`` and
 the parameters that carried them, ``apply_adjustment`` and the bounded live adjustment it applied
 (a combination carries no adjustment envelope — ``spec/combination.md``), ``Placement`` (the ghost is
-a bare ``(x, y)``; its heading is derived, never chosen — see ``runtime/warp.py::ghost_heading``), and
+a bare ``(x, y)``; its heading is derived, never chosen — it faces the opponent, see
+``runtime/warp.py::ghost_heading``), and
 every ``Commit`` field that only made sense once a move had an approach phase and a settle phase to
 distinguish (``strike_at``, ``arrived``, ``completed_by``, ``is_approaching``, ``slot``,
 ``adjustment``, ``pose``, ``context``, ``placement``). Full accounting: ``spec/intent.md`` "Removed at
@@ -91,9 +92,13 @@ Conventions
 - **All ticks are 50 Hz** (:data:`~openroboxing.spec.constants.TICK_HZ`), matching every other
   ``tick`` / ``commit_at`` field in the project.
 - **The ghost is MuJoCo world ``(x, y)`` on the ground plane** — the same frame the arena, the shadow
-  and the client use. Unlike 1.0-2.2's ``Placement`` it carries no heading: the ghost's heading is
-  derived by ``runtime/warp.py::ghost_heading`` from the fighter's own heading plus the combination's
-  recorded turn, and is never player-set (``spec/intent.md`` "The ghost").
+  and the client use. Unlike 1.0-2.2's ``Placement`` it carries no heading: a fighter always faces
+  its opponent (owner, 2026-09-03), so the ghost's heading is derived by
+  ``runtime/warp.py::ghost_heading`` as the bearing from the ghost to the opponent, and is never
+  player-set (``spec/intent.md`` "The ghost").
+- **Where a fighter looks is the world's business, not the timeline's.** ``generator_intent`` is
+  handed the live bearing each tick and hands it straight to the runner; nothing here remembers a
+  heading between ticks, because the opponent moves while a combination runs.
 - A commit is **scheduled** from ``issued_at`` and **executing** from ``commit_at``. The queue is
   bounded on the first; the fighter's motion follows the second.
 - **Nothing here knows where a fighter is**, except at the one instant a commit starts, and even then
@@ -117,7 +122,7 @@ if TYPE_CHECKING:  # `runtime` does not import `studio` at module level - see ge
 
 #: The `spec/intent.md` version this module implements. The test that pairs them is what caught
 #: 2.0 shipping without a changelog entry, so the two move together or not at all.
-SPEC_VERSION = "3.0"
+SPEC_VERSION = "3.1"
 
 
 class IntentError(RuntimeError):
@@ -152,8 +157,8 @@ class StagedIntent:
     #: A name in the combination library, or ``None`` if nothing is selected yet.
     combination: str | None = None
     #: Where the combination's **last keyframe** must land: world ``(x, y)`` only. The heading is
-    #: derived (``runtime/warp.py::ghost_heading``) and is never part of what is staged — see
-    #: `spec/intent.md` "Ghost heading is derived, not staged".
+    #: derived — it faces the opponent (``runtime/warp.py::ghost_heading``) — and is never part of
+    #: what is staged, see `spec/intent.md` "Ghost heading is derived, not staged".
     ghost: tuple[float, float] | None = None
 
     def is_committable(self) -> bool:
@@ -393,7 +398,7 @@ class IntentTimeline:
         self,
         tick: int,
         *,
-        facing_angle: float = 0.0,
+        facing_angle: float | None = None,
         anchor: Callable[[], tuple[tuple[float, float], float]] | None = None,
     ) -> GeneratorIntent:
         """The control signals for the tick **this frame will be played at**, advancing the queue.
@@ -417,9 +422,12 @@ class IntentTimeline:
           :data:`OPENING_STANCE_CONTEXT`, the only place an idle clip is still used.
 
         Args:
-            facing_angle: generator-frame heading to face in the opening stance, before any commit
-                has become current. Ignored once a commit is executing or held — its own recorded
-                heading takes over.
+            facing_angle: **world-frame** bearing to the opponent, measured this tick by whoever
+                owns the world. It is what the fighter faces in every state — the opening stance, a
+                running commit's live leg, and a held final leg alike (owner, 2026-09-03: a fighter
+                is always turned towards the fighter it is boxing, reversing design D5's recorded
+                heading). ``None`` means there is no opponent, as on a lone-fighter bench: a
+                combination then keeps its own recorded heading and the stance faces ``0.0``.
             anchor: ``() -> ((x, y), heading)``, the fighter's *true* position and heading right now.
                 Called **exactly once per commit**, the tick that commit starts, to build its runner
                 — never once per tick, and never for a commit that is already running. Required for
@@ -438,6 +446,7 @@ class IntentTimeline:
         if commit is None:
             return self._hold_intent(tick, facing_angle)
 
+
         if commit.commit_at is None:
             if anchor is None:
                 raise IntentError(
@@ -452,9 +461,9 @@ class IntentTimeline:
             legs = warp(commit.record, position, heading, commit.ghost, speed_ceiling=None)
             commit.runner = CombinationRunner(commit.record, legs, commit_at=tick)
 
-        return commit.runner.intent_for(tick)
+        return commit.runner.intent_for(tick, facing_angle)
 
-    def _hold_intent(self, tick: int, facing_angle: float) -> GeneratorIntent:
+    def _hold_intent(self, tick: int, facing_angle: float | None) -> GeneratorIntent:
         """What a fighter with nothing current does. **Two states, not one:**
 
         - **a commit has completed** — hold *that commit's* runner at its final leg.
@@ -475,5 +484,8 @@ class IntentTimeline:
         """
         for commit in reversed(self._commits):
             if commit.runner is not None:
-                return commit.runner.intent_for(tick)
-        return GeneratorIntent(style=OPENING_STANCE_CONTEXT, facing_angle=facing_angle)
+                return commit.runner.intent_for(tick, facing_angle)
+        return GeneratorIntent(
+            style=OPENING_STANCE_CONTEXT,
+            facing_angle=0.0 if facing_angle is None else facing_angle,
+        )

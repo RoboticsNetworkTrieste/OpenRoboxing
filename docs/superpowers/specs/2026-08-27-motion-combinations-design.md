@@ -144,16 +144,27 @@ Instead the recorded offsets are kept at **true size** and the leftover travel i
 drift. Every combination stays usable at fighting range, the degenerate case disappears, and the jog
 takes still land correctly because their recorded path already points where it is going.
 
-### D5 — the ghost's heading is derived, never chosen, and nothing aims at the target
+### D5 — the ghost's heading is derived, never chosen — and it faces the opponent
 
-`h_ghost = h₀ + recorded_heading_delta`. A combination that ends 90° off its start puts the ghost
-90° off the fighter's current heading, wherever the ghost sits. Per keyframe,
-`heading_i = h₀ + heading_offset_i`.
+**Reversed in part 2026-09-03 by the owner**, after seeing it run. What stands: the heading is
+*derived* and the player never sets it. What is reversed: what it is derived *from*.
 
-This is load-bearing: the jog combinations turn up to **267°**, and a ghost that always faced the
-target would discard the turn that *is* the motion. It also lands on the trap `CLAUDE.md` names —
-`facing_angle` is where the fighter looks, `movement_angle` is where it travels, and here they
-genuinely differ, per leg.
+**Now.** `h_ghost = atan2(opponent - ghost)` — the ghost faces the opponent from wherever it stands,
+and while the combination runs the same bearing is re-measured every tick from the opponent's live
+position (`runtime/fight.py::FightWorld.facing_angle`), because the opponent moves during the 2.4–7.6 s
+a combination lasts. It is both headings MotionBricks gets: the target frame's, and `facing_direction`.
+
+**Before (3.0).** `h_ghost = h₀ + recorded_heading_delta`, per keyframe `heading_i = h₀ +
+heading_offset_i`. The reasoning was that the jog combinations turn up to **267°** and a
+target-facing ghost would discard the turn that *is* the motion. That is true of the recording and
+false of the fight: a boxer stays turned towards the fighter they are boxing, and a fighter that
+inherits a 267° turn ends the move facing the ropes. The recorded turn still moves the body — it is
+in the keyframe joint angles and the footwork — it simply no longer aims the fighter.
+
+It still lands on the trap `CLAUDE.md` names, harder than before: `facing_angle` is where the
+fighter looks (now the opponent) and `movement_angle` is where it travels (still the warped
+footwork), so they differ per leg by construction. Only a leg with no travel of its own
+(`warp.STILL_LEG_M`) takes the bearing for both.
 
 ### D6 — there is no loadout; every combination is selectable, nine at a time
 

@@ -492,3 +492,75 @@ def test_stepping_before_a_round_starts_raises(library) -> None:
 
 def arena_nq(world) -> int:
     return world.model.nq
+
+
+# --- the target frame faces the opponent (owner, 2026-09-03) ----------------------------------------
+def _yaw_quat(yaw: float) -> np.ndarray:
+    return np.array([math.cos(yaw / 2), 0.0, 0.0, math.sin(yaw / 2)])
+
+
+class _BearingOnlyWorld:
+    """Two pelvises and nothing else: enough to ask which way one fighter must look."""
+
+    facing_angle = FightWorld.facing_angle
+    opponent = FightWorld.opponent
+
+    def __init__(self, red: tuple[float, float], blue: tuple[float, float], apply_yaw_: float):
+        self.data = SimpleNamespace(
+            xpos=np.array([[red[0], red[1], 0.79], [blue[0], blue[1], 0.79]])
+        )
+        self.fighters = {
+            name: SimpleNamespace(
+                name=name, pelvis_body=index, apply_delta_heading=_yaw_quat(apply_yaw_)
+            )
+            for index, name in enumerate(FIGHTERS)
+        }
+
+
+def test_the_bearing_to_the_opponent_is_a_world_angle() -> None:
+    """It is measured in the world and converted at `_intent_at`, the one place the two frames meet
+    — so the timeline, the warp and the client all talk about the same angle."""
+    world = _BearingOnlyWorld(red=(0.0, 0.0), blue=(0.0, 2.0), apply_yaw_=0.5)
+    bearing = world.facing_angle("red")
+
+    assert bearing == pytest.approx(math.pi / 2)
+    assert bearing != pytest.approx(math.pi / 2 - 0.5), "that is the generator frame, not the world"
+
+
+def test_the_target_frame_faces_the_opponent_not_the_recording() -> None:
+    """The reversal of design D5, at the boundary that matters: whatever a combination recorded, the
+    heading handed to MotionBricks — the target frame's, and the facing direction — points at the
+    opponent, live, on every tick of a running commit."""
+    record = _combination("turner", headings=(1.0, 2.0))
+    timeline = IntentTimeline({"turner": record}, require_admitted=False)
+    timeline.stage(combination="turner", ghost=(1.0, 0.5))
+    timeline.commit(0)
+
+    world = _AnchorOnlyWorld((0.5, 0.2), 0.3)
+    fighter = _fighter_stub("red", timeline)
+    fighter.apply_delta_heading = _yaw_quat(0.5)
+    world.fighters = {"red": fighter}
+
+    bearing = -1.1  # world frame, as `facing_angle` reports it
+    commit_at = timeline.commits[0].issued_at + COMMIT_HORIZON_TICKS
+    for tick in range(commit_at + 1):
+        intent = world._intent_at(fighter, tick, bearing=bearing)
+
+    expected = generator_heading(bearing, fighter.apply_delta_heading)
+    assert intent.target_position is not None, "a commit must be running for this to mean anything"
+    assert intent.target_heading == pytest.approx(expected)
+    assert intent.facing_angle == pytest.approx(expected)
+
+
+def test_the_opening_stance_faces_the_opponent_in_the_generators_frame() -> None:
+    """The stance branch carries no target, so it returns early — and must still be converted, or a
+    fighter with nothing committed stands facing wherever its clip happened to start."""
+    timeline = IntentTimeline({"unused": _combination("unused")}, require_admitted=False)
+    world = _AnchorOnlyWorld((0.0, 0.0), 0.0)
+    fighter = _fighter_stub("red", timeline)
+    fighter.apply_delta_heading = _yaw_quat(0.5)
+    world.fighters = {"red": fighter}
+
+    intent = world._intent_at(fighter, 0, bearing=-1.1)
+    assert intent.target_position is None
+    assert intent.facing_angle == pytest.approx(generator_heading(-1.1, fighter.apply_delta_heading))

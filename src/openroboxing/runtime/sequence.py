@@ -19,6 +19,11 @@ Conventions
   :meth:`CombinationRunner.leg_index` is queried with the tick a frame is *for*, and
   ``generator_intent`` is called once per generated frame at 30 Hz with the 50 Hz tick that frame
   targets — a per-call counter would drift the moment a frame is skipped.
+- **A fighter always faces its opponent** (owner, 2026-09-03, reversing design D5). The heading is
+  not warped and not recorded: the world measures the bearing to the opponent every tick and passes
+  it to :meth:`CombinationRunner.intent_for`, which uses it for the target frame's heading and for
+  the facing signal alike. A recorded turn still moves the *body* - it is in the keyframe joint
+  angles and in the footwork - it just no longer aims the fighter at the ropes.
 - **A finished runner holds its last leg.** Past the final boundary, :meth:`leg_index` keeps
   returning the last leg forever — the existing runtime's "holding a pose is the same target
   re-armed" behaviour, and this is not a special case of it.
@@ -110,20 +115,31 @@ class CombinationRunner:
         """Whether ``tick`` is at or past the final boundary."""
         return tick >= self.end_tick
 
-    def intent_for(self, tick: int) -> GeneratorIntent:
+    def intent_for(self, tick: int, facing_angle: float | None = None) -> GeneratorIntent:
         """The live leg's :class:`GeneratorIntent` at ``tick``.
 
         Carries ``movement_angle`` and ``facing_angle`` through separately - `CLAUDE.md`'s named
         trap is leaving the former at its default, which silently means "straight ahead, always".
+
+        Args:
+            facing_angle: the bearing to the opponent, world frame, measured this tick. It replaces
+                the recorded heading in **both** places a heading reaches the generator - the target
+                frame's ``target_heading`` and the ``facing_angle`` control signal - and a leg that
+                does not travel (``Leg.is_still``) takes it as its ``movement_angle`` too, since a
+                still leg has no direction of its own to travel in. ``None`` means *there is no
+                opponent*: the Studio's rehearsal and the warp tools drive a lone fighter, and there
+                the recording is the only heading there is.
         """
         index = self.leg_index(tick)
         leg = self._legs[index]
+        facing = leg.facing_angle if facing_angle is None else facing_angle
+        heading = leg.target_heading if facing_angle is None else facing_angle
         return GeneratorIntent(
             style=COMBINATION_CONTEXT,
-            movement_angle=leg.movement_angle,
-            facing_angle=leg.facing_angle,
+            movement_angle=facing if leg.is_still else leg.movement_angle,
+            facing_angle=facing,
             target_position=leg.target_position,
-            target_heading=leg.target_heading,
+            target_heading=heading,
             pose=self._pose_for(leg, index),
             horizon_tokens=leg.horizon_tokens,
         )

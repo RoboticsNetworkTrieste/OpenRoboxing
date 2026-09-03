@@ -251,3 +251,12 @@ history: `src/openroboxing/spec/upstream_patches.md`.
 - **`GeneratorIntent` has two directions and they are different signals.** `facing_angle` is where
   the fighter looks; `movement_angle` is where it travels, and the difference is what selects the
   gait. Leaving the second at its default says "straight ahead, always".
+- **A fighter always faces its opponent** (owner, 2026-09-03, `spec/intent.md` 3.1, reversing half of
+  design D5). Both headings that reach MotionBricks — the **target frame's** `target_heading` and the
+  `facing_angle` control signal — are the live bearing to the opponent, measured in world frame by
+  `fight.py::FightWorld.facing_angle` and re-measured every tick, because the opponent moves while a
+  2.4–7.6 s combination runs. A combination's recorded turn moves the *body*, never the aim. The
+  recorded heading in `warp.py` survives only where there is no opponent to face — the Studio's
+  rehearsal and the warp tools — and `sequence.py::CombinationRunner.intent_for` is the one place the
+  override happens. Prose saying a ghost's heading is the fighter's heading plus the combination's
+  recorded turn predates 3.1.

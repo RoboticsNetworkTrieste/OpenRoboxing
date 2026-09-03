@@ -125,8 +125,8 @@ def test_committing_with_a_combination_but_no_ghost_is_rejected() -> None:
 
 
 # --- the spec pairing -------------------------------------------------------------------------
-def test_the_spec_is_versioned_at_3_0() -> None:
-    assert SPEC_VERSION == "3.0"
+def test_the_spec_is_versioned_at_3_1() -> None:
+    assert SPEC_VERSION == "3.1"
     spec = Path(OPENROBOXING_ROOT / "spec/intent.md").read_text()
     assert re.search(rf"Version \*\*{re.escape(SPEC_VERSION)}\*\*", spec), (
         "spec/intent.md does not declare the version runtime/intents.py implements"
@@ -342,3 +342,35 @@ def test_a_queued_commit_cannot_be_taken_back() -> None:
     timeline.stage(combination="combo-b", ghost=(9.0, 9.0))
     assert timeline.commits[0].record.name == "combo-a"
     assert timeline.commits[0].ghost == (1.0, 0.0)
+
+
+# --- the live bearing (owner, 2026-09-03: a fighter always faces its opponent) --------------------
+def test_the_bearing_reaches_an_executing_commit() -> None:
+    """The timeline no longer swallows ``facing_angle`` once a commit is current: the world tells it
+    where the opponent is every tick, and that is what the fighter must face (reversing D5)."""
+    timeline = _timeline()
+    timeline.stage(combination="combo-a", ghost=(1.0, 0.0))
+    timeline.commit(now=0)
+    anchor = _anchor(heading=0.7)
+
+    for tick in range(COMMIT_HORIZON_TICKS):
+        timeline.generator_intent(tick, facing_angle=1.25, anchor=anchor)
+    intent = timeline.generator_intent(COMMIT_HORIZON_TICKS, facing_angle=1.25, anchor=anchor)
+
+    assert intent.facing_angle == pytest.approx(1.25)
+    assert intent.target_heading == pytest.approx(1.25)
+
+
+def test_the_bearing_reaches_a_held_final_leg() -> None:
+    """Holding a pose is the same leg re-armed, so a fighter standing in its last pose keeps turning
+    to face the opponent rather than freezing on the heading it happened to finish with."""
+    timeline = _timeline()
+    timeline.stage(combination="combo-a", ghost=(1.0, 0.0))
+    timeline.commit(now=0)
+    anchor = _anchor(heading=0.7)
+    for tick in range(400):
+        timeline.generator_intent(tick, facing_angle=0.0, anchor=anchor)
+
+    held = timeline.generator_intent(500, facing_angle=-0.9, anchor=anchor)
+    assert held.facing_angle == pytest.approx(-0.9)
+    assert held.target_heading == pytest.approx(-0.9)

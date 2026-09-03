@@ -48,9 +48,11 @@ Conventions
 - **Every index is derived by name** (`CLAUDE.md` invariant 4): joint qpos addresses, dof addresses
   and actuators are read out of the compiled model through ``red_``/``blue_``-prefixed names, never
   by assuming the arena lays two 36-value blocks out back to back.
-- **A fighter faces its opponent while holding.** A committed combination carries its own recorded
-  heading per leg; the bearing computed here only decides which way a fighter looks before its first
-  commit, in :data:`~openroboxing.runtime.intents.OPENING_STANCE_CONTEXT`. See
+- **A fighter always faces its opponent** (owner, 2026-09-03, reversing design D5). The bearing
+  measured here is what the fighter looks at in every state — the opening stance, a running
+  combination's legs, and a held final pose alike — and it is the *target frame's* heading too, so
+  MotionBricks aims the move at the opponent rather than at wherever the recording happened to turn.
+  Re-measured every tick, because the opponent moves while a combination runs. See
   :meth:`FightWorld.facing_angle`.
 - **Ticks are 50 Hz** and match every other tick in the project.
 - **World frame is MuJoCo's** — ``(x, y)`` on the ground plane. The anchor, the ghost and everything
@@ -443,10 +445,12 @@ class FightWorld:
         targets: dict[str, np.ndarray] = {}
         for fighter in self.fighters.values():
             fighter.pilot.act(fighter.timeline, tick)
-            # The bearing is captured now and reused for every frame this fill produces. It is only
-            # the *hold* facing — a committed combination carries its own recorded heading per leg —
-            # and a fighter that is holding is by definition not moving, so a bearing that is up to a
-            # lookahead stale is a bearing that has not changed.
+            # The bearing is captured now and reused for every frame this fill produces, which is
+            # the same staleness a leg's target position already carries: both are read at the tick
+            # the generator plans on, and a fill covers at most one replan interval. Since the
+            # owner's 2026-09-03 rule it applies to *every* state, not just the hold — a running
+            # combination faces the opponent too — so it is re-read on the next fill rather than
+            # remembered anywhere.
             bearing = self.facing_angle(fighter.name)
             fighter.stream.ensure(
                 lambda play_tick, _f=fighter, _b=bearing: self._intent_at(_f, play_tick, _b),
@@ -643,7 +647,12 @@ class FightWorld:
                 self._record_drift(starting, seen[0])
 
         if intent.target_position is None:
-            return intent
+            # The opening stance carries no target, but its facing is still a world angle: convert
+            # it here or a fighter with nothing committed stands facing wherever its clip started.
+            return replace(
+                intent,
+                facing_angle=generator_heading(intent.facing_angle, fighter.apply_delta_heading),
+            )
 
         position, heading = self.to_generator_frame(
             fighter.name, intent.target_position, intent.target_heading
@@ -657,19 +666,23 @@ class FightWorld:
         )
 
     def facing_angle(self, fighter: str) -> float:
-        """The **generator-frame** heading that points a fighter at its opponent.
+        """The **world-frame** heading that points a fighter at its opponent.
 
-        Converted out of world frame deliberately. The generator plans in its own frame and
-        ``apply_delta_heading`` is the fixed yaw between the two, so subtracting its yaw is what makes
-        "face the opponent" mean the same thing on both sides of the bridge. Passing a world angle
-        straight through would aim each fighter off by however far its clip happened to start.
+        World frame, not the generator's, even though the generator is the only consumer: everything
+        the timeline and the warp deal in is world-frame, and :meth:`_intent_at` is the one place the
+        two frames meet (its docstring). Converting here as well would convert twice — a leg's
+        ``target_heading`` is *this* angle since the owner's 2026-09-03 rule, and it goes through
+        :meth:`to_generator_frame` like every other world quantity.
+
+        The conversion is not optional at that boundary, only relocated: ``apply_delta_heading`` is
+        the fixed yaw between the two frames, and passing a world angle straight to MotionBricks aims
+        a fighter off by however far its clip happened to start.
         """
         me = self.fighters[fighter]
         them = self.fighters[self.opponent(fighter)]
         here = self.data.xpos[me.pelvis_body]
         there = self.data.xpos[them.pelvis_body]
-        world = float(np.arctan2(there[1] - here[1], there[0] - here[0]))
-        return generator_heading(world, me.apply_delta_heading)
+        return float(np.arctan2(there[1] - here[1], there[0] - here[0]))
 
     # -- physics -------------------------------------------------------------------------------------
     def _step_physics(self, targets: dict[str, np.ndarray]) -> None:
