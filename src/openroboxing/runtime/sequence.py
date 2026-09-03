@@ -37,10 +37,11 @@ Conventions
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from openroboxing.runtime.generator import GeneratorIntent
-from openroboxing.spec.constants import SECONDS_PER_TOKEN, TICK_HZ
+from openroboxing.spec.constants import MAX_TOKENS, MIN_TOKENS, SECONDS_PER_TOKEN, TICK_HZ
 
 if TYPE_CHECKING:  # `runtime` does not import `studio` at module level - see generator.py's note.
     from openroboxing.runtime.warp import Leg
@@ -58,6 +59,19 @@ class SequenceError(RuntimeError):
 def _tokens_to_ticks(tokens: float) -> int:
     """Tokens to ticks, the same rounding ``CombinationRecord.duration_ticks`` uses."""
     return round(tokens * SECONDS_PER_TOKEN * TICK_HZ)
+
+
+def _ticks_to_tokens(ticks: float) -> int:
+    """Ticks to tokens, rounded **up**.
+
+    Up, not to nearest, and this is load-bearing. A plan that ends a frame short of its boundary
+    leaves the generator's play cursor clamped on the plan's final frame, and
+    ``get_context_mujoco_qpos`` then returns four copies of it (``full_agent.py:503-521``) — a
+    zero-velocity context telling the model the fighter is standing still while it is in fact
+    mid-combination. Rounding up overshoots by at most 3 frames instead, which the next leg's replan
+    simply writes over.
+    """
+    return math.ceil(ticks / (SECONDS_PER_TOKEN * TICK_HZ))
 
 
 class CombinationRunner:
@@ -116,10 +130,37 @@ class CombinationRunner:
         return tick >= self.end_tick
 
     def intent_for(self, tick: int, facing_angle: float | None = None) -> GeneratorIntent:
-        """The live leg's :class:`GeneratorIntent` at ``tick``.
+        """The live leg's :class:`GeneratorIntent` at ``tick``, aimed at a **pinned** keyframe.
 
         Carries ``movement_angle`` and ``facing_angle`` through separately - `CLAUDE.md`'s named
         trap is leaving the former at its default, which silently means "straight ahead, always".
+
+        The keyframe does not move; the hole in front of it shrinks
+        ---------------------------------------------------------------
+        MotionBricks fills a hole between its 4 context frames and a target at the plan's last token.
+        A leg's keyframe belongs at its recorded boundary tick, so what is asked for is **the
+        distance still to run** - ``ceil(boundary - tick)`` in tokens - not the leg's full length.
+
+        Asking for the full length on every replan (what this did before ``spec/intent.md`` 3.2)
+        re-aimed the keyframe ``REPLAN_DT * GENERATOR_HZ`` = 15 frames further out each time, so it
+        receded and never landed on its boundary: a 12-token leg put its target at frame 48, then 63,
+        then 78. That is the "motions broken in pieces" defect - the recorded rhythm stretched and
+        the pose only ever partially attained.
+
+        Three regimes, each meaning something different:
+
+        - **hole > MAX_TOKENS** - the keyframe is not reachable inside one plan, so nothing is aimed
+          at it: ``pose=None``, and a full-length plan of ambient ``walk_boxing`` shaped only by the
+          leg's ``target_position``. Measured 2026-09-03, 55 % of the rebuilt library's legs start
+          here, so this is the majority path and not an exception.
+        - **MIN_TOKENS <= hole <= MAX_TOKENS** - the real in-between, where the recorded pose lands,
+          within 3 ticks of its boundary.
+        - **hole < MIN_TOKENS** - no plan that short exists, so ``replan=False`` and the last plan is
+          allowed to play out. This is what makes the landing exact instead of overshooting by up to
+          ``MIN_TOKENS``.
+
+        Past :attr:`end_tick` there is no future keyframe, so the final leg's pose is re-aimed at
+        ``MIN_TOKENS`` forever - the converge-and-hold behaviour the runtime already had.
 
         Args:
             facing_angle: the bearing to the opponent, world frame, measured this tick. It replaces
@@ -134,15 +175,34 @@ class CombinationRunner:
         leg = self._legs[index]
         facing = leg.facing_angle if facing_angle is None else facing_angle
         heading = leg.target_heading if facing_angle is None else facing_angle
+        horizon, pose, replan = self._horizon_for(tick, index, leg)
         return GeneratorIntent(
             style=COMBINATION_CONTEXT,
             movement_angle=facing if leg.is_still else leg.movement_angle,
             facing_angle=facing,
             target_position=leg.target_position,
             target_heading=heading,
-            pose=self._pose_for(leg, index),
-            horizon_tokens=leg.horizon_tokens,
+            pose=pose,
+            horizon_tokens=horizon,
+            replan=replan,
         )
+
+    def _horizon_for(self, tick: int, index: int, leg: Leg) -> tuple[int, object | None, bool]:
+        """``(horizon_tokens, pose, replan)`` for ``tick`` — the three regimes in
+        :meth:`intent_for`'s docstring, which is where the reasoning lives.
+        """
+        if tick >= self.end_tick:
+            # Holding. No future keyframe, so re-aim at the final pose with the shortest plan there
+            # is; anything longer would invent motion past a combination that has finished.
+            return MIN_TOKENS, self._pose_for(leg, index), True
+
+        remaining = _ticks_to_tokens(self._boundaries[index] - tick)
+        if remaining > MAX_TOKENS:
+            return MAX_TOKENS, None, True
+        if remaining >= MIN_TOKENS:
+            return remaining, self._pose_for(leg, index), True
+        # The hole is shorter than the shortest plan: let the last one land.
+        return MIN_TOKENS, self._pose_for(leg, index), False
 
     def _pose_for(self, leg: Leg, index: int) -> object:
         """The leg's target as a real ``PoseRecord`` - local import keeps `studio` out of `runtime`'s

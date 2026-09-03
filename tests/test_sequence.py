@@ -63,11 +63,18 @@ def test_is_finished_flips_at_the_end_tick():
     assert run.is_finished(run.end_tick)
 
 
-def test_intent_carries_the_legs_pose_target_and_forced_length():
+def test_intent_carries_the_legs_pose_target_and_the_hole_to_its_keyframe():
+    """At a leg's first tick the hole *is* the leg, so the horizon equals its recorded length.
+
+    That coincidence is the only place the two agree. Everywhere else the horizon is the distance
+    still to run to a keyframe pinned at its boundary, which is what `tests/test_sequence_pinned.py`
+    covers — see `spec/intent.md` 3.2.
+    """
     run, _ = runner([6, 8, 6])
     intent = run.intent_for(0)
     assert intent.style == sequence.COMBINATION_CONTEXT
     assert intent.horizon_tokens == 6
+    assert intent.replan is True
     assert intent.target_position is not None
     assert intent.target_heading is not None
 

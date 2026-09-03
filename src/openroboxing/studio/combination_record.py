@@ -28,7 +28,7 @@ from openroboxing.runtime.conventions import G1, G1Conventions, quat_wxyz_to_yaw
 from openroboxing.spec.constants import (
     COMBINATION_MAX_KEYFRAMES,
     COMBINATION_MIN_KEYFRAMES,
-    MAX_TOKENS,
+    MAX_TARGET_LEG_TOKENS,
     MIN_TOKENS,
     SECONDS_PER_TOKEN,
     TICK_HZ,
@@ -176,10 +176,13 @@ def validate(record: CombinationRecord) -> None:
         else:
             if keyframe.leg_tokens is None:
                 raise CombinationError(f"{record.name} keyframe {i}: leg_tokens is required")
-            if not MIN_TOKENS <= keyframe.leg_tokens <= MAX_TOKENS:
+            # MAX_TARGET_LEG_TOKENS, not MAX_TOKENS: since `spec/intent.md` 3.2 a leg is no longer
+            # one plan, so the planner's per-plan maximum does not bound it. A long leg runs an
+            # untargeted phase and then a landing in-between (`runtime/sequence.py`).
+            if not MIN_TOKENS <= keyframe.leg_tokens <= MAX_TARGET_LEG_TOKENS:
                 raise CombinationError(
                     f"{record.name} keyframe {i}: leg_tokens {keyframe.leg_tokens} outside "
-                    f"[{MIN_TOKENS}, {MAX_TOKENS}]"
+                    f"[{MIN_TOKENS}, {MAX_TARGET_LEG_TOKENS}]"
                 )
 
 

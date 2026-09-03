@@ -52,12 +52,45 @@ Not a taste parameter: `MIN_TOKENS` is the shortest plan MotionBricks can produc
 closer than this cannot both be in-betweened to. Source: spec/combination.md.
 """
 
-MAX_LEG_FRAMES: int = MAX_TOKENS * NUM_FRAMES_PER_TOKEN
-"""Longest single leg, in corpus frames = 64 = 2.13 s.
+MIN_TARGET_GAP_FRAMES: int = 2 * MIN_KEYFRAME_GAP_FRAMES
+"""Closest two **targets** may sit, in corpus frames = 48 = 1.6 s.
 
-Not a taste parameter either: `MAX_TOKENS` is the longest plan MotionBricks can produce. A recorded
-gap longer than this is *densified* — a keyframe is added at the busiest frame inside it — rather
-than held, so every leg is plannable and no leg invents motion the recording does not contain.
+Not the same quantity as :data:`MIN_KEYFRAME_GAP_FRAMES`, and the two must never be merged. That one
+governs **detection** — how close two turning points may be *found* — and the measured 39/48
+punch-capture rate depends on it. This one governs **selection**: which of those detected poses go on
+to become hard targets a plan is aimed at. Thinning runs after detection
+(``segment.thin_targets``), so raising this does not re-open the punch-capture measurement.
+
+Derived, not chosen: doubling the detection floor is the smallest change that delivers the owner's
+"longer than double" (2026-09-03). Measured over the shipped 130-combination library, it takes the
+median leg from 9 tokens (1.20 s) to 17 tokens (2.27 s).
+"""
+
+MAX_LEG_FRAMES: int = MAX_TOKENS * NUM_FRAMES_PER_TOKEN
+"""The longest **plan** MotionBricks can produce, in corpus frames = 64 = 2.13 s.
+
+**No longer the cap on a leg** — that is :data:`MAX_TARGET_LEG_FRAMES` since `spec/intent.md` 3.2.
+Until 3.2 the two were the same number because a leg was exactly one plan; a leg is now an untargeted
+phase followed by a landing in-between, so this bounds only the plan, and it is enforced at runtime
+in ``runtime/sequence.py`` rather than in the segmenter.
+"""
+
+MAX_TARGET_LEG_FRAMES: int = 96
+"""Longest leg between two targets, in corpus frames = 24 tokens = 3.2 s.
+
+**This replaces :data:`MAX_LEG_FRAMES` as the thing that caps a leg**, and the distinction is the
+whole of `spec/intent.md` 3.2. A leg used to be exactly one plan, so the planner's 16-token maximum
+capped it. Since 3.2 a long leg is an *untargeted phase plus a landing plan*, so the planner's
+maximum caps a **plan** and no longer caps a **leg**.
+
+The cap does not disappear, though. Measured 2026-09-03: uncapped, legs reach 36 tokens (4.8 s) and a
+combination runs past the duration the no-cancellation rule was sized for. 96 frames keeps a two-leg
+combination at 6.4 s, inside the 7.6 s the shipped library already reaches.
+"""
+
+MAX_TARGET_LEG_TOKENS: int = MAX_TARGET_LEG_FRAMES // NUM_FRAMES_PER_TOKEN
+"""24. What ``segment.leg_tokens`` and the record validator bound a leg by — **not**
+:data:`MAX_TOKENS`, which bounds a plan.
 """
 
 REACH_TURNING_PROMINENCE_M: float = 0.05
@@ -111,8 +144,22 @@ only 0.78 m — the turn rather than the run — and are kept.
 
 COMBINATION_MIN_KEYFRAMES: int = 3
 COMBINATION_MAX_KEYFRAMES: int = 6
-"""A combination is 3-6 keyframes. Fewer is not a combination; more runs past the duration the
-no-cancellation rule can survive. Source: the design's decision D1.
+"""A combination is 3-6 keyframes. Becomes 2-3 when the library is rebuilt on sparse targets.
+
+.. note::
+   These bounds and the library are a matched pair — the shipped v0.2 records have 6 keyframes, so
+   lowering the maximum before rebuilding would invalidate every one of them. They change in the
+   same commit as the rebuild. The reasoning for the 2-3 they become:
+
+Derived from duration, not taste. At up to :data:`MAX_TARGET_LEG_FRAMES` (3.2 s) per leg, two legs is
+6.4 s and three would be 9.6 s — past the 7.6 s the shipped library reaches and past what the
+no-cancellation rule was sized for (`docs/ASSUMPTIONS.md` §A23).
+
+**Halving the keyframe count is what makes each leg carry twice the motion.** Keeping the count at 6
+would have doubled the *combination* instead, which is a different and much riskier change: a
+combination cannot be cancelled, so its length is a game-feel decision (§A23), while a leg's length
+is a question about what MotionBricks in-betweens well. Source: the owner, 2026-09-03, superseding
+the design's decision D1.
 """
 
 COMMIT_HORIZON_TICKS: int = 30
