@@ -74,7 +74,7 @@ Violating any of these is a design regression, not a shortcut:
 | Leg | **0.8–3.2 s** | `MIN_TOKENS`–`MAX_TARGET_LEG_TOKENS` × 4 frames at 30 Hz. **A leg is not a plan**: 39 % are longer than one, and run untargeted then land |
 | Combination | **2–3 keyframes, 0.93–6.0 s** | measured over the 174-record v0.2 library, median 3.87 s; median leg 15 tokens (2.00 s) |
 | Move end | **`commit_at + duration_ticks`** | known when it starts — `spec/intent.md` 3.0 |
-| Drift gain | **0.803** | the generator covers this fraction of a commanded residual; `warp.py` divides by it |
+| Drift gain | **0.935** | the generator covers this fraction of a commanded residual; `warp.py` divides by it. Re-measured 2026-09-03 under the pinned-keyframe schedule; the +/-0.10 consistency bar is not met — see docs/perf/2026-09-03-drift-gain-pinned.md |
 | Sustained walk | **0.83 m/s** | measured; validates a player's placement at issue time only |
 
 ---

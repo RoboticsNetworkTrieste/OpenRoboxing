@@ -68,11 +68,11 @@ from dataclasses import dataclass
 import numpy as np
 
 from openroboxing.paths import COMBINATION_DIR
-from openroboxing.runtime.generator import GeneratorIntent, MotionBricksGenerator
+from openroboxing.runtime.generator import MotionBricksGenerator
+from openroboxing.runtime.reference import ReferenceStream
+from openroboxing.runtime.sequence import CombinationRunner
 from openroboxing.runtime.warp import WarpError, warp
-from openroboxing.spec.constants import GENERATOR_DT
 from openroboxing.studio import combination_record as cr
-from openroboxing.studio.pose_record import PoseRecord
 
 #: The three families in the library, by filename prefix (`CLAUDE.md`).
 DEFAULT_PREFIXES = ("shadow-boxing", "ib-dodge", "ib-combat-turn-jog")
@@ -137,16 +137,6 @@ def pick_records(
     return chosen
 
 
-def leg_pose(joint_angles: dict, horizon_tokens: int, name: str) -> PoseRecord:
-    """A leg's target as the ``PoseRecord`` the override consumes. See ``spike_warp_tracking``."""
-    return PoseRecord(
-        name=name,
-        joint_angles=dict(joint_angles),
-        horizon_tokens=horizon_tokens,
-        library_version="v0.2",
-    )
-
-
 def drive_to_ghost(
     generator: MotionBricksGenerator,
     record: cr.CombinationRecord,
@@ -161,26 +151,20 @@ def drive_to_ghost(
     """
     generator.reset(seed)
     legs = warp(record, (0.0, 0.0), 0.0, ghost, speed_ceiling=DISABLED_SPEED_CEILING)
-    final_xy: tuple[float, float] | None = None
-    for index, leg in enumerate(legs):
-        intent = GeneratorIntent(
-            style="walk_boxing",
-            movement_angle=leg.movement_angle,
-            facing_angle=leg.facing_angle,
-            target_position=leg.target_position,
-            target_heading=leg.target_heading,
-            pose=leg_pose(leg.joint_angles, leg.horizon_tokens, f"{record.name}-leg{index}"),
-            horizon_tokens=leg.horizon_tokens,
-        )
-        # force=True: this measures the plan, not the replan schedule (spike_warp_tracking).
-        generator.generate(intent, generator.context_qpos(), GENERATOR_DT, force=True)
-        plan = generator.plan()
-        final_xy = (float(plan[-1, 0]), float(plan[-1, 1]))
-        # Consume the plan so the next leg's context is where this one left off.
-        for _ in range(len(plan)):
-            generator.next_frame()
-    assert final_xy is not None  # a validated record always has at least one leg
-    return final_xy
+    runner = CombinationRunner(record, legs, commit_at=0)
+
+    # Driven through the real production path — `CombinationRunner.intent_for` for the intents and
+    # `ReferenceStream` for the pull/replan loop — rather than one forced plan per leg.
+    #
+    # Until `spec/intent.md` 3.2 this forced a plan per leg with `force=True`, which measured the
+    # *plan* rather than the replan schedule. The runtime has never run that way: it replans at the
+    # ambient cadence and, since 3.2, stops replanning inside a leg's tail. A gain measured on a
+    # schedule the runtime does not run is a gain for nothing, and `warp` divides every residual by
+    # it — so the two must agree or every fighter lands off-ghost by the difference.
+    stream = ReferenceStream(generator)
+    stream.ensure(runner.intent_for, tick=runner.end_tick, ticks_ahead=0)
+    reached = stream.motion[runner.end_tick]
+    return (float(reached[0]), float(reached[1]))
 
 
 def _direction(displacement: tuple[float, float]) -> tuple[float, float]:

@@ -62,8 +62,8 @@ to become hard targets a plan is aimed at. Thinning runs after detection
 (``segment.thin_targets``), so raising this does not re-open the punch-capture measurement.
 
 Derived, not chosen: doubling the detection floor is the smallest change that delivers the owner's
-"longer than double" (2026-09-03). Measured over the shipped 130-combination library, it takes the
-median leg from 9 tokens (1.20 s) to 17 tokens (2.27 s).
+"longer than double" (2026-09-03). Measured over the rebuilt library, it takes the median leg from
+9 tokens (1.20 s) to **15 tokens (2.00 s)**, and 39 % of legs past the length of a single plan.
 """
 
 MAX_LEG_FRAMES: int = MAX_TOKENS * NUM_FRAMES_PER_TOKEN
@@ -84,8 +84,8 @@ capped it. Since 3.2 a long leg is an *untargeted phase plus a landing plan*, so
 maximum caps a **plan** and no longer caps a **leg**.
 
 The cap does not disappear, though. Measured 2026-09-03: uncapped, legs reach 36 tokens (4.8 s) and a
-combination runs past the duration the no-cancellation rule was sized for. 96 frames keeps a two-leg
-combination at 6.4 s, inside the 7.6 s the shipped library already reaches.
+combination runs past the duration the no-cancellation rule was sized for. 96 frames bounds a two-leg
+combination at 6.4 s; the rebuilt library measures 0.93-6.00 s, inside the 7.6 s the old one reached.
 """
 
 MAX_TARGET_LEG_TOKENS: int = MAX_TARGET_LEG_FRAMES // NUM_FRAMES_PER_TOKEN
@@ -199,8 +199,24 @@ the number a client uses to tell a player how long a placement will cost them, a
 APPROACH_TIMEOUT_TICKS is derived from.
 """
 
-DRIFT_GAIN: float = 0.803
+DRIFT_GAIN: float = 0.935
 """Fraction of a commanded drift the generator actually covers, measured not assumed.
+
+**Re-measured 2026-09-03 under the pinned-keyframe schedule (`spec/intent.md` 3.2): 0.935**, up from
+the 0.803 below. The old figure was measured with `force=True`, one clean plan per leg — a schedule
+the runtime has never run. Replanning at the ambient cadence re-aims at a target that is *pinned*, so
+the fighter gets repeated chances to converge and closes most of the shortfall a one-shot plan
+leaves. At 0.803 `warp` asked for 1.25x the residual while the generator covered 0.935 of it, a ~16 %
+overshoot past the ghost on every commit.
+
+**Known weakness, recorded rather than smoothed over: the +/-0.10 bar below is not met.** The spread
+runs 0.645-1.054, and it is structured, not random — concentrated at 0.25 m drifts, where the
+residual is comparable to the combination's own recorded travel. At 1-2 m the measurements are tight
+around 0.97. A drift-dependent gain would fit better and is a deliberate decision for later, not a
+constant update. Full method, per-family medians and the argument:
+docs/perf/2026-09-03-drift-gain-pinned.md.
+
+Superseded measurement, for the record:
 
 A warped combination aims each leg at a target position; MotionBricks converges toward it but
 arrives short by a near-constant fraction, so `runtime/warp.py` divides the residual by this to
