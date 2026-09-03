@@ -324,7 +324,7 @@ class MotionBricksGenerator:
         self.mj_data = self._demo.mj_data
 
         # Its own stream, never the global one. Upstream falls back to `t.randint` drawn from the
-        # *global* torch RNG when no `random_seed` is given (full_agent.py:224, :382), so two
+        # *global* torch RNG when no `random_seed` is given (full_agent.py:220, :326), so two
         # generators in one process sample the clip library from a shared sequence and each one's
         # output depends on how often the other has been driven. Measured: red's plan changed when
         # blue was generated first. A per-generator stream makes isolation structural.
@@ -467,7 +467,7 @@ class MotionBricksGenerator:
                 )
             x, y = intent.target_position
             # A full 3-vector in MuJoCo world coordinates, not a ground-plane pair: canonicalisation
-            # subtracts `first_frame_position` (3-D) and rotates by a 3x3 (full_agent.py:613-615).
+            # subtracts `first_frame_position` (3-D) and rotates by a 3x3 (full_agent.py:558-561).
             # The height component is carried through untouched and never read.
             signals["specific_target_positions"] = (
                 t.tensor([x, y, 0.0]).float().view([1, 1, 3])

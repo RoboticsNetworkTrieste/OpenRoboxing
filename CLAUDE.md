@@ -33,10 +33,11 @@ Violating any of these is a design regression, not a shortcut:
 1. **One OS process per match runtime.** MuJoCo physics, **one MotionBricks instance per fighter**,
    one shared policy. **No DDS. No C++ deploy stack. No inter-process physics.**
 
-   *Corrected 2026-08-08 (M3-T2).* This invariant said "one batched MotionBricks instance (both
-   fighters, `batch=2`, shared weights)". **Upstream cannot do that** — `full_agent.py` hardcodes
-   `batch_size = 1` (`:450`), reads `frames['mujoco_qpos'][0]` (`:561`) and calls
-   `num_pred_frames.item()` (`:167`), which raises on a two-element tensor. Supporting it means a
+   *Corrected 2026-08-08 (M3-T2); line numbers re-verified 2026-09-03 at upstream `v1.1`.* This
+   invariant said "one batched MotionBricks instance (both fighters, `batch=2`, shared weights)".
+   **Upstream cannot do that** — `full_agent.py` hardcodes `batch_size = 1` (`:395`, the first line
+   of `_generate_inbetween_frames`), reads `frames['mujoco_qpos'][0, ...]` (`:506`) and calls
+   `num_pred_frames.item()` (`:163-164`), which raises on a two-element tensor. Supporting it means a
    second patch to upstream, which invariant 3 makes a stop-and-ask. Measured, it is not worth it:
    two generators cost 1513 MiB of a 49 GiB card and 29.6 ms per replan, which over a 0.5 s interval
    is 1.18 ms of a 20 ms tick. Full reasoning in `runtime/pool.py`.

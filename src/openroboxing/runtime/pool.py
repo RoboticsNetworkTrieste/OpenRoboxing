@@ -5,10 +5,10 @@ Why two instances rather than ``batch=2``
 `WORKPLAN` M3-T2 asks for "one MotionBricks instance serving both fighters with ``batch=2`` and
 shared weights". **Upstream cannot do that**, and the reason is in `full_agent.py`, not in the model:
 
-- ``_generate_inbetween_frames`` opens with ``batch_size = 1`` (`:450`) and builds its context
+- ``_generate_inbetween_frames`` opens with ``batch_size = 1`` (`:395`) and builds its context
   tensors at that shape.
-- ``get_next_frame`` reads ``frames['mujoco_qpos'][0, ...]`` (`:561`) — only ever fighter zero.
-- ``generate_new_frames`` truncates with ``num_pred_frames.item()`` (`:167`), which raises on a
+- ``get_next_frame`` reads ``frames['mujoco_qpos'][0, ...]`` (`:506`) — only ever fighter zero.
+- ``generate_new_frames`` truncates with ``num_pred_frames.item()`` (`:163-164`), which raises on a
   two-element tensor, and would in any case force both fighters to one plan length.
 
 Supporting a real batch means a second patch to upstream, which `CLAUDE.md` invariant 3 makes a

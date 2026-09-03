@@ -6,6 +6,18 @@ Snapshot under test: `a9d20b2ac0949244d94461a1a3263f38c5027c4a` (see `upstream_p
 All line references are against that snapshot, and **a submodule bump invalidates every one of
 them** — re-verify after `git submodule update --remote external/gr00t-wbc`.
 
+**Re-verified 2026-09-03 at `a0732b642c0333077e127a2f56ab0014c196bca4` (upstream `v1.1`).** The bump
+from `c374bae` to `v1.1` is **documentation only** — `README.md` and `docs/source/*`, five files,
+nothing under `motionbricks/`, `gear_sonic/` or `gear_sonic_deploy/` — so it moved no line in this
+file. The re-verification did catch drift left by the *previous* bump (`a9d20b2` → `c374bae`), which
+added three registry entries inside `GetObservationRegistry` (the 4-frame low-latency SONIC variants
+`motion_joint_positions_wrists_4frame_step1`, `smpl_joints_4frame_step1`,
+`smpl_anchor_orientation_4frame_step1`) and shifted every `g1_deploy_onnx_ref.cpp` line after ~1741
+by **+3**. Those numbers are corrected below. Nothing else changed: the three added entries are
+*available* terms in the registry, not *active* ones — `policy/release/observation_config.yaml` is
+untouched, so the assembled observation is bit-identical and `tests/test_obs_parity.py` still passes.
+`full_agent.py` has not changed since the original snapshot at all.
+
 Paths written bare below (`gear_sonic_deploy/…`, `motionbricks/…`, `g1_deploy_onnx_ref.cpp`) are
 upstream's own, relative to `GR00T_ROOT`: the submodule at `external/gr00t-wbc`, or the checkout
 named by `OPENROBOXING_GR00T_ROOT`.
@@ -52,12 +64,12 @@ The real definition is three-part:
 
 | Concern | Location |
 |---|---|
-| Term name → dimension → gather function | `g1_deploy_onnx_ref.cpp:1704-1792` (`GetObservationRegistry`) — ~70 terms available |
+| Term name → dimension → gather function | `g1_deploy_onnx_ref.cpp:1704-1794` (`GetObservationRegistry`) — ~70 terms available |
 | Which terms are *active*, and their order | `gear_sonic_deploy/policy/release/observation_config.yaml` |
-| Concatenation order + dimension validation | `g1_deploy_onnx_ref.cpp:1795-1837` (`InitializeObservationFunctions`) |
+| Concatenation order + dimension validation | `g1_deploy_onnx_ref.cpp:1798-1840` (`InitializeObservationFunctions`) |
 
 Order is **the YAML's listing order**, not the registry's. Offsets accumulate in that order and the
-total is asserted against the ONNX input dimension at startup (`:1832-1837`).
+total is asserted against the ONNX input dimension at startup (`:1835-1840`).
 
 ### Which config file is authoritative
 
@@ -72,7 +84,7 @@ files directly:
 `observation_config_sonic_release.yaml` uses Python/IsaacLab term names (`encoder_index`,
 `command_multi_future_nonflat`, `motion_anchor_ori_b_mf_nonflat`, …) that appear in **neither** our
 snapshot's registry **nor** `origin/main`'s. Feeding it to the deploy throws
-*"Unknown observation function"* (`:1814-1817`). Treat it as documentation of a newer sibling export,
+*"Unknown observation function"* (`:1817-1820`). Treat it as documentation of a newer sibling export,
 not as config.
 
 Ground truth from the shipped weights:
@@ -122,9 +134,9 @@ the policy input. `obs.py` needs five ring buffers of depth 10, all filled at 50
 
 ### The per-mode zero-fill — the single biggest M1-T3 simplification
 
-Verified in `g1_deploy_onnx_ref.cpp:2008` and `:2041-2089`: the encoder buffer is zeroed, the active
+Verified in `g1_deploy_onnx_ref.cpp:2011` and `:2044-2092`: the encoder buffer is zeroed, the active
 mode's `required_observations` list is looked up, and **only those terms are computed**. Everything
-else is left at zero (`:2089` — *"Not required for this mode — leave as zero"*).
+else is left at zero (`:2092` — *"Not required for this mode — leave as zero"*).
 
 OpenRoboxing drives the robot from a kinematic reference motion, i.e. **encoder mode `g1`
 (`mode_id: 0`)**. So of 1762 encoder dims, only **644 are ever non-zero**:
@@ -221,7 +233,7 @@ must either add an encoder dump (a second fixture-only patch) or validate the en
 ## Consequences for the plan
 
 1. **Correct `CLAUDE.md`**: `observation_config.hpp` is a parser, not the observation spec. The spec
-   is `g1_deploy_onnx_ref.cpp:1704-1792` + `policy/release/observation_config.yaml`.
+   is `g1_deploy_onnx_ref.cpp:1704-1794` + `policy/release/observation_config.yaml`.
 2. **M1-T3 is smaller than scoped** — 6 policy terms and 4 encoder terms, not the full registry.
 3. **Two fixture-only C++ patches are wanted** before M1-T2: dump precision, and an encoder-input
    dump. Both additive, both to be registered in `upstream_patches.md`.
