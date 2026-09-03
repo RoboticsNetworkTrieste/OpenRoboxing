@@ -46,6 +46,32 @@ const REJECTED_COLOUR = 0xffa53d;
 /* Scratch for `project`, so the render loop allocates nothing. */
 const PROJECTED = new THREE.Vector3();
 
+/* ---- the orbit camera -------------------------------------------------------------------------- */
+/* What the camera looks at: the ring's middle at roughly a fighter's head height. Orbiting turns
+ * about this point, so it is what stays put on screen while the view moves. */
+const LOOK_HEIGHT_M = 0.9;
+
+/* Side-on from -y, which is where the broadcast camera has always stood (`runtime/arena.py`). */
+const DEFAULT_AZIMUTH = -Math.PI / 2;
+
+/* A full drag across a 1000 px canvas turns the ring most of the way round — fast enough to get
+ * behind a fighter in one gesture, slow enough to trim an angle by a few degrees. */
+const ORBIT_RAD_PER_PX = 0.005;
+
+/* Elevation is clamped short of both poles. At the top the camera's up-vector and its view
+ * direction become parallel and `lookAt` has no unique answer, which reads on screen as the ring
+ * snapping round; at the bottom you are under the floor looking up at nothing. */
+const MIN_ELEVATION_RAD = 0.05;
+const MAX_ELEVATION_RAD = Math.PI / 2 - 0.05;
+
+/* Near enough to read a glove, far enough to see both corners and the queue's whole path. */
+const MIN_DISTANCE_M = 1.5;
+const MAX_DISTANCE_M = 24.0;
+
+/* Per unit of `wheel.deltaY`. Small because a notch is ~100 units in `deltaMode: PIXEL`, which
+ * makes one notch about a 10 % change. */
+const ZOOM_PER_WHEEL_UNIT = 0.001;
+
 function setQuat(object, w, x, y, z) {
   object.quaternion.set(x, y, z, w);
 }
@@ -140,8 +166,106 @@ export class Ring {
 
     this.tick = 0;
     this.expectedBodies = 0;
+
+    /* Where the camera sits, in spherical coordinates about `target`. `frameRing` seeds these from
+       the arena and `_applyOrbit` is the only thing that ever writes `camera.position`, so the view
+       has exactly one source of truth however it got moved. */
+    this.orbit = {
+      azimuth: DEFAULT_AZIMUTH,
+      elevation: 0.0,
+      distance: 1.0,
+      target: new THREE.Vector3(0, 0, LOOK_HEIGHT_M),
+      home: null,   // the framing `frameRing` computed, so a reset needs no arena to re-read
+    };
+
     this._addLights();
+    this._bindOrbit();
     window.addEventListener('resize', () => this.resize());
+  }
+
+  /* ---- orbiting -------------------------------------------------------------------------------- */
+  /* Drag to orbit, wheel to zoom, double-click to go back to the broadcast view.
+   *
+   * On the mouse rather than on keys because the keyboard is fully spoken for: in hotseat two
+   * players share it, and between them they already own a 3x3 picker, two page keys, four drive
+   * keys, commit and clear (`app.js`'s SEATS). The mouse is otherwise unused — the ghost is driven
+   * by keys, not by pointing — so nothing had to be given up for this.
+   *
+   * Hand-rolled rather than vendoring three's OrbitControls: the whole behaviour is the forty lines
+   * below, and `client/` is deliberately vanilla with no build step (`CLAUDE.md`).
+   */
+  _bindOrbit() {
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    this.canvas.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      dragging = true;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      this.canvas.setPointerCapture(event.pointerId);
+    });
+
+    this.canvas.addEventListener('pointermove', (event) => {
+      if (!dragging) return;
+      const dx = event.clientX - lastX;
+      const dy = event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      /* Drag right turns the ring right; drag up lifts the camera and looks further down. Both are
+         negated because moving the *pointer* one way moves the *scene* that way, which means the
+         camera goes the other. */
+      this.orbit.azimuth -= dx * ORBIT_RAD_PER_PX;
+      this.orbit.elevation -= dy * ORBIT_RAD_PER_PX;
+      this._applyOrbit();
+    });
+
+    const release = (event) => {
+      if (!dragging) return;
+      dragging = false;
+      if (this.canvas.hasPointerCapture?.(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
+      }
+    };
+    this.canvas.addEventListener('pointerup', release);
+    this.canvas.addEventListener('pointercancel', release);
+
+    this.canvas.addEventListener(
+      'wheel',
+      (event) => {
+        /* Multiplicative, so one notch changes the view by the same *proportion* whether you are
+           close in or far out. Linear zoom crawls when far and overshoots when near. */
+        event.preventDefault();
+        this.orbit.distance *= Math.exp(event.deltaY * ZOOM_PER_WHEEL_UNIT);
+        this._applyOrbit();
+      },
+      { passive: false },
+    );
+
+    this.canvas.addEventListener('dblclick', () => this.resetView());
+  }
+
+  /* Camera position from `this.orbit`. The only writer of `camera.position`. */
+  _applyOrbit() {
+    const orbit = this.orbit;
+    orbit.elevation = Math.min(MAX_ELEVATION_RAD, Math.max(MIN_ELEVATION_RAD, orbit.elevation));
+    orbit.distance = Math.min(MAX_DISTANCE_M, Math.max(MIN_DISTANCE_M, orbit.distance));
+
+    const ground = Math.cos(orbit.elevation) * orbit.distance;
+    this.camera.position.set(
+      orbit.target.x + ground * Math.cos(orbit.azimuth),
+      orbit.target.y + ground * Math.sin(orbit.azimuth),
+      orbit.target.z + Math.sin(orbit.elevation) * orbit.distance,
+    );
+    this.camera.lookAt(orbit.target);
+  }
+
+  /* Back to the framing `frameRing` chose — the broadcast view the round opened on. */
+  resetView() {
+    if (!this.orbit.home) return;
+    Object.assign(this.orbit, this.orbit.home);
+    this._applyOrbit();
   }
 
   _addLights() {
@@ -315,10 +439,29 @@ export class Ring {
   }
 
   /* ---- the camera ------------------------------------------------------------------------------ */
+  /* The broadcast view, and the home a double-click returns to.
+   *
+   * Expressed as an orbit rather than as a position so that the framing and the free look are the
+   * same mechanism — the camera has one source of truth (`_applyOrbit`) whether it was placed here
+   * or dragged. The numbers reproduce the fixed framing this had before orbiting existed: standing
+   * back `half + 3.4` m on the -y side, 2.6 m up, looking at the ring's middle at head height.
+   */
   frameRing(arena) {
     const half = (arena?.ring_size ?? 4.9) / 2;
-    this.camera.position.set(0, -(half + 3.4), 2.6);
-    this.camera.lookAt(0, 0, 0.9);
+    const back = half + 3.4;
+    const rise = 2.6 - LOOK_HEIGHT_M;
+
+    this.orbit.target.set(0, 0, LOOK_HEIGHT_M);
+    this.orbit.distance = Math.hypot(back, rise);
+    this.orbit.elevation = Math.atan2(rise, back);
+    this.orbit.azimuth = DEFAULT_AZIMUTH;
+    this.orbit.home = {
+      azimuth: this.orbit.azimuth,
+      elevation: this.orbit.elevation,
+      distance: this.orbit.distance,
+    };
+
+    this._applyOrbit();
     this.resize();
   }
 

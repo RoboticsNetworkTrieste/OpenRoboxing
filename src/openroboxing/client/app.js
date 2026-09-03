@@ -38,8 +38,14 @@ import { drawArena, drawMap } from './overlay.js';
 
 /* Each seat gets one region of the keyboard: a 3x3 block picks a combination off the current page,
    two keys turn the page, a cluster drives the shadow, one big key commits. Movement keys are
-   **held**, and they move the ghost in *screen* directions — the camera is fixed, so up-the-screen
-   is a fixed world direction and nobody has to think about whose forward is whose. */
+   **held**, and they move the ghost in fixed **world** directions, the same ones the minimap draws.
+
+   They used to be described as *screen* directions, which was the same thing while the camera could
+   not move. Since the view orbits (`ring.js`) it is not, and world-fixed is the deliberate choice
+   (owner, 2026-09-03): placement stays predictable while the camera moves, and the minimap — also
+   world-fixed — is the frame of reference both players read it in. Rotating these with the view
+   would make where a held key sends the ghost depend on where someone last dragged the camera,
+   which in hotseat is the *other* player. */
 const SEATS = {
   red: {
     keys: ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
