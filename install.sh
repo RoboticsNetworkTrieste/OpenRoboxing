@@ -16,6 +16,14 @@
 
 set -euo pipefail
 
+# A PYTHONPATH exported by the caller's profile outranks the venv's own site-packages — venvs do
+# not shield against it. ROS is the common case (its setup.bash exports
+# /opt/ros/<distro>/lib/pythonX.Y/site-packages): measured 2026-08-27 on a ROS Jazzy box, pytest
+# auto-loaded ROS's launch_pytest plugin from there, its import chain needed `lark` (absent from
+# .venv_mb), and the smoke test died before collecting a single test. Everything this script runs
+# must see the venv and nothing else.
+unset PYTHONPATH
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Overridable so this script can be tested against a throwaway venv without touching a working one.
 VENV="${OPENROBOXING_VENV:-${REPO_ROOT}/.venv_mb}"

@@ -28,6 +28,9 @@ bash install.sh
 .venv_mb/bin/python -m openroboxing.tools.serve_match      # a hotseat match, http://localhost:8080/
 ```
 
+If your shell exports a `PYTHONPATH` (ROS does), prefix these with `env -u PYTHONPATH` — see
+[Environment](#environment) for why.
+
 ## Upstream
 
 `external/gr00t-wbc` is NVlabs/GR00T-WholeBodyControl, tracking `main`, and is never modified.
@@ -214,7 +217,7 @@ and library versions. Exits non-zero if a required artefact is missing.
 
 ## Environment
 
-`.venv_mb` (Python 3.10) runs MotionBricks and MuJoCo. Three facts worth knowing before you start:
+`.venv_mb` (Python 3.10+) runs MotionBricks and MuJoCo. Four facts worth knowing before you start:
 
 - **Importing `motionbricks...demo.controllers` requires an X display** — it imports `pynput` at
   module scope. Our headless tools must drive `full_agent` directly and never import that module.
@@ -225,6 +228,17 @@ and library versions. Exits non-zero if a required artefact is missing.
   the second has none — a PD-driven fighter built from it collapses in half a second. Use
   `paths.G1_29DOF_SIM_XML`; the trap is written up in
   [`spec/upstream_notes.md`](src/openroboxing/spec/upstream_notes.md).
+- **An exported `PYTHONPATH` outranks the venv** — a venv does not shield against it. ROS is the
+  common case: its `setup.bash` (usually sourced from `.bashrc`) exports
+  `/opt/ros/<distro>/lib/pythonX.Y/site-packages`, and from there pytest auto-loads ROS's
+  `launch_pytest` plugin, whose import chain needs `lark` (absent from `.venv_mb`) — the test
+  suite dies before collecting a single test (measured 2026-08-27, ROS Jazzy). `install.sh` unsets
+  `PYTHONPATH` for everything *it* runs; when invoking `.venv_mb/bin/python` yourself from a shell
+  that exports one, clear it the same way:
+
+  ```bash
+  env -u PYTHONPATH .venv_mb/bin/python -m openroboxing.tools.serve_sparring
+  ```
 
 Upstream's own `external/gr00t-wbc/check_environment.py` reports Isaac Lab / `trl` / `accelerate` /
 `wandb` missing. That is expected and does not block M0–M4: those are training dependencies, and the
