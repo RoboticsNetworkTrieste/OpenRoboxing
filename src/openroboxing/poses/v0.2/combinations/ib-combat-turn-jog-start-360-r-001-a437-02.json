@@ -1,0 +1,100 @@
+{
+  "admission": "draft",
+  "duration_ticks": 53,
+  "keyframes": [
+    {
+      "heading_offset": 0.0,
+      "joint_angles": {
+        "left_ankle_pitch_joint": -0.5234861320483751,
+        "left_ankle_roll_joint": -0.03848499869866553,
+        "left_elbow_joint": -0.5911715537837495,
+        "left_hip_pitch_joint": -0.1731686187764415,
+        "left_hip_roll_joint": 0.18165784789826436,
+        "left_hip_yaw_joint": 0.3619243542234239,
+        "left_knee_joint": 0.9091465452199015,
+        "left_shoulder_pitch_joint": -0.10015140816244218,
+        "left_shoulder_roll_joint": 0.8304935442781648,
+        "left_shoulder_yaw_joint": 0.05999687986119644,
+        "left_wrist_pitch_joint": 0.06664230301863969,
+        "left_wrist_roll_joint": 0.4347178834404876,
+        "left_wrist_yaw_joint": 0.17232520586870778,
+        "right_ankle_pitch_joint": -0.4465686341549441,
+        "right_ankle_roll_joint": -0.03932363813089506,
+        "right_elbow_joint": -0.8295943157409522,
+        "right_hip_pitch_joint": -0.43819430005778004,
+        "right_hip_roll_joint": -0.27367897135284885,
+        "right_hip_yaw_joint": -0.27789474434787104,
+        "right_knee_joint": 1.5362584600127862,
+        "right_shoulder_pitch_joint": 0.318680820038951,
+        "right_shoulder_roll_joint": -0.7445492558532966,
+        "right_shoulder_yaw_joint": 0.3652753165740829,
+        "right_wrist_pitch_joint": 0.07969522430456508,
+        "right_wrist_roll_joint": -0.4240096601609717,
+        "right_wrist_yaw_joint": -0.1216825106360253,
+        "waist_pitch_joint": 0.38737675250464504,
+        "waist_roll_joint": -0.02685867987272302,
+        "waist_yaw_joint": -0.14712832378997862
+      },
+      "leg_tokens": null,
+      "root_offset": [
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "heading_offset": 0.0032236686391406977,
+      "joint_angles": {
+        "left_ankle_pitch_joint": -0.6051652721136822,
+        "left_ankle_roll_joint": -0.08604315609100589,
+        "left_elbow_joint": -0.36256342398233415,
+        "left_hip_pitch_joint": 0.02873612880376407,
+        "left_hip_roll_joint": 0.37414186842689445,
+        "left_hip_yaw_joint": 0.013220493838067868,
+        "left_knee_joint": 2.0001183503199185,
+        "left_shoulder_pitch_joint": 0.08774224458979789,
+        "left_shoulder_roll_joint": 0.6285753908239746,
+        "left_shoulder_yaw_joint": -0.14541837236192223,
+        "left_wrist_pitch_joint": -0.07576161868971278,
+        "left_wrist_roll_joint": 0.4313360811219458,
+        "left_wrist_yaw_joint": 0.1699304221487538,
+        "right_ankle_pitch_joint": -0.03862201577159334,
+        "right_ankle_roll_joint": -0.07160445385097253,
+        "right_elbow_joint": -0.9065789215441225,
+        "right_hip_pitch_joint": -0.6158735128464906,
+        "right_hip_roll_joint": -0.04054046423209299,
+        "right_hip_yaw_joint": -0.06977588984695059,
+        "right_knee_joint": 0.9358908013068638,
+        "right_shoulder_pitch_joint": 0.5425392631738666,
+        "right_shoulder_roll_joint": -0.8356912220570665,
+        "right_shoulder_yaw_joint": 0.14305402718412305,
+        "right_wrist_pitch_joint": -0.02485798451655239,
+        "right_wrist_roll_joint": -0.17792656085030323,
+        "right_wrist_yaw_joint": -0.14863208202020442,
+        "waist_pitch_joint": 0.42762188084736175,
+        "waist_roll_joint": -0.04057101971130765,
+        "waist_yaw_joint": -0.18932298490717306
+      },
+      "leg_tokens": 8,
+      "root_offset": [
+        0.014803647994995117,
+        0.5469039916992191
+      ]
+    }
+  ],
+  "library_version": "v0.2",
+  "name": "ib-combat-turn-jog-start-360-r-001-a437-02",
+  "recorded_displacement": [
+    0.014803647994995117,
+    0.5469039916992191
+  ],
+  "recorded_heading_delta": 0.0032236686391406977,
+  "schema_version": "0.2",
+  "source": {
+    "end_frame": 450,
+    "mirrored": false,
+    "start_frame": 419,
+    "take": "ib_combat_turn_jog_start_360_R_001__A437"
+  },
+  "telegraph_ms": null,
+  "tracking_error_rad": null
+}

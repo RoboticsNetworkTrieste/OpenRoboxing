@@ -1,6 +1,6 @@
 """Ingest the mocap corpus in ``motions/`` (M5-T2).
 
-Implements the input half of ``spec/combination.md`` 0.1.
+Implements the input half of ``spec/combination.md`` 0.2.
 
 Conventions
 -----------

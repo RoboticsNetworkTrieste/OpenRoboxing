@@ -52,12 +52,45 @@ Not a taste parameter: `MIN_TOKENS` is the shortest plan MotionBricks can produc
 closer than this cannot both be in-betweened to. Source: spec/combination.md.
 """
 
-MAX_LEG_FRAMES: int = MAX_TOKENS * NUM_FRAMES_PER_TOKEN
-"""Longest single leg, in corpus frames = 64 = 2.13 s.
+MIN_TARGET_GAP_FRAMES: int = 2 * MIN_KEYFRAME_GAP_FRAMES
+"""Closest two **targets** may sit, in corpus frames = 48 = 1.6 s.
 
-Not a taste parameter either: `MAX_TOKENS` is the longest plan MotionBricks can produce. A recorded
-gap longer than this is *densified* — a keyframe is added at the busiest frame inside it — rather
-than held, so every leg is plannable and no leg invents motion the recording does not contain.
+Not the same quantity as :data:`MIN_KEYFRAME_GAP_FRAMES`, and the two must never be merged. That one
+governs **detection** — how close two turning points may be *found* — and the measured 39/48
+punch-capture rate depends on it. This one governs **selection**: which of those detected poses go on
+to become hard targets a plan is aimed at. Thinning runs after detection
+(``segment.thin_targets``), so raising this does not re-open the punch-capture measurement.
+
+Derived, not chosen: doubling the detection floor is the smallest change that delivers the owner's
+"longer than double" (2026-09-03). Measured over the rebuilt library, it takes the median leg from
+9 tokens (1.20 s) to **15 tokens (2.00 s)**, and 39 % of legs past the length of a single plan.
+"""
+
+MAX_LEG_FRAMES: int = MAX_TOKENS * NUM_FRAMES_PER_TOKEN
+"""The longest **plan** MotionBricks can produce, in corpus frames = 64 = 2.13 s.
+
+**No longer the cap on a leg** — that is :data:`MAX_TARGET_LEG_FRAMES` since `spec/intent.md` 3.2.
+Until 3.2 the two were the same number because a leg was exactly one plan; a leg is now an untargeted
+phase followed by a landing in-between, so this bounds only the plan, and it is enforced at runtime
+in ``runtime/sequence.py`` rather than in the segmenter.
+"""
+
+MAX_TARGET_LEG_FRAMES: int = 96
+"""Longest leg between two targets, in corpus frames = 24 tokens = 3.2 s.
+
+**This replaces :data:`MAX_LEG_FRAMES` as the thing that caps a leg**, and the distinction is the
+whole of `spec/intent.md` 3.2. A leg used to be exactly one plan, so the planner's 16-token maximum
+capped it. Since 3.2 a long leg is an *untargeted phase plus a landing plan*, so the planner's
+maximum caps a **plan** and no longer caps a **leg**.
+
+The cap does not disappear, though. Measured 2026-09-03: uncapped, legs reach 36 tokens (4.8 s) and a
+combination runs past the duration the no-cancellation rule was sized for. 96 frames bounds a two-leg
+combination at 6.4 s; the rebuilt library measures 0.93-6.00 s, inside the 7.6 s the old one reached.
+"""
+
+MAX_TARGET_LEG_TOKENS: int = MAX_TARGET_LEG_FRAMES // NUM_FRAMES_PER_TOKEN
+"""24. What ``segment.leg_tokens`` and the record validator bound a leg by — **not**
+:data:`MAX_TOKENS`, which bounds a plan.
 """
 
 REACH_TURNING_PROMINENCE_M: float = 0.05
@@ -100,19 +133,36 @@ recording drives it forwards. It still lands on the ghost, but the path is incoh
 supplied by the placement now (`spec/intent.md` 3.0 deleted the walk approach), so a combination
 carrying its own is working against the control rather than with it.
 
-**Measured 2026-08-28**, and the value sits in a real gap rather than being chosen: sorted by
-recorded travel the 136-combination library runs ... 0.72, 0.75, 0.77, 0.78, 0.78, 0.98, then jumps
-to 1.47, 2.84, 3.08, 3.09, 3.37. The 0.49 m gap between 0.98 and 1.47 is the widest in the
-distribution, and everything above it is a `combat_turn_jog_start` run. 1.2 m sits in that gap.
+**Re-measured 2026-09-03, and it now excludes nothing** — kept as a guard, not as an active filter.
+Rebuilding the library on sparse targets (`spec/intent.md` 3.2) cut combinations from 3-6 keyframes
+to 2-3, and a shorter combination carries correspondingly less of its own recorded travel: the whole
+174-record library now tops out at **0.78 m**, against this 1.2 m threshold. The long
+`combat_turn_jog_start` runs that motivated the constant are still in the corpus, but each is now
+split across several combinations, none of which carries more than a fraction of the run.
 
-Note it excludes 6 combinations, not the whole jog family: two of that family's combinations travel
-only 0.78 m — the turn rather than the run — and are kept.
+Retained rather than deleted because the failure it prevents is real and would return silently: a
+combination recording metres of its own travel fights its placement, since `warp` subtracts the
+recording's displacement from the ghost and ramps the remainder. If a future corpus or a raised
+:data:`MAX_TARGET_LEG_FRAMES` reintroduces long single combinations, this catches them.
+
+Superseded measurement, for the record — over the old 136-combination library the sorted travel ran
+... 0.72, 0.75, 0.77, 0.78, 0.78, 0.98, then jumped to 1.47, 2.84, 3.08, 3.09, 3.37, and 1.2 m sat in
+that 0.49 m gap, excluding 6 combinations.
 """
 
-COMBINATION_MIN_KEYFRAMES: int = 3
-COMBINATION_MAX_KEYFRAMES: int = 6
-"""A combination is 3-6 keyframes. Fewer is not a combination; more runs past the duration the
-no-cancellation rule can survive. Source: the design's decision D1.
+COMBINATION_MIN_KEYFRAMES: int = 2
+COMBINATION_MAX_KEYFRAMES: int = 3
+"""A combination is 2-3 keyframes, i.e. 1-2 legs. Was 3-6 before `spec/intent.md` 3.2.
+
+Derived from duration, not taste. At up to :data:`MAX_TARGET_LEG_FRAMES` (3.2 s) per leg, two legs is
+6.4 s and three would be 9.6 s — past the 7.6 s the shipped library reaches and past what the
+no-cancellation rule was sized for (`docs/ASSUMPTIONS.md` §A23).
+
+**Halving the keyframe count is what makes each leg carry twice the motion.** Keeping the count at 6
+would have doubled the *combination* instead, which is a different and much riskier change: a
+combination cannot be cancelled, so its length is a game-feel decision (§A23), while a leg's length
+is a question about what MotionBricks in-betweens well. Source: the owner, 2026-09-03, superseding
+the design's decision D1.
 """
 
 COMMIT_HORIZON_TICKS: int = 30
@@ -149,8 +199,24 @@ the number a client uses to tell a player how long a placement will cost them, a
 APPROACH_TIMEOUT_TICKS is derived from.
 """
 
-DRIFT_GAIN: float = 0.803
+DRIFT_GAIN: float = 0.935
 """Fraction of a commanded drift the generator actually covers, measured not assumed.
+
+**Re-measured 2026-09-03 under the pinned-keyframe schedule (`spec/intent.md` 3.2): 0.935**, up from
+the 0.803 below. The old figure was measured with `force=True`, one clean plan per leg — a schedule
+the runtime has never run. Replanning at the ambient cadence re-aims at a target that is *pinned*, so
+the fighter gets repeated chances to converge and closes most of the shortfall a one-shot plan
+leaves. At 0.803 `warp` asked for 1.25x the residual while the generator covered 0.935 of it, a ~16 %
+overshoot past the ghost on every commit.
+
+**Known weakness, recorded rather than smoothed over: the +/-0.10 bar below is not met.** The spread
+runs 0.645-1.054, and it is structured, not random — concentrated at 0.25 m drifts, where the
+residual is comparable to the combination's own recorded travel. At 1-2 m the measurements are tight
+around 0.97. A drift-dependent gain would fit better and is a deliberate decision for later, not a
+constant update. Full method, per-family medians and the argument:
+docs/perf/2026-09-03-drift-gain-pinned.md.
+
+Superseded measurement, for the record:
 
 A warped combination aims each leg at a target position; MotionBricks converges toward it but
 arrives short by a near-constant fraction, so `runtime/warp.py` divides the residual by this to

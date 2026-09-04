@@ -13,7 +13,9 @@ import pytest
 
 from openroboxing.paths import MOTIONS_DIR
 from openroboxing.spec.constants import (
-    MAX_LEG_FRAMES,
+    COMBINATION_MAX_KEYFRAMES,
+    COMBINATION_MIN_KEYFRAMES,
+    MAX_TARGET_LEG_FRAMES,
     MAX_TOKENS,
     MIN_KEYFRAME_GAP_FRAMES,
     MIN_TOKENS,
@@ -71,14 +73,21 @@ def test_reference_punch_counts_match_the_measured_evidence():
         assert len(_reference_punches(qpos)) == expected, take
 
 
-def test_keyframes_capture_most_punches():
+def test_detection_captures_most_punches():
     """The regression test for "not punches but statuary positioning".
 
-    A keyframe must land at (or within `CAPTURE_TOLERANCE_FRAMES` of) most of a take's punches. The
-    old segmenter (quantile of joint-space speed) samples the fast mid-swing frame between two poses
-    and essentially never lands on the punch itself — measured 4/39 = 10.3 % over exactly these
-    takes. The new one (turning points of `reach`, Cartesian body space) lands on the reversal
-    itself by construction.
+    A detected keyframe must land at (or within `CAPTURE_TOLERANCE_FRAMES` of) most of a take's
+    punches. The old segmenter (quantile of joint-space speed) samples the fast mid-swing frame
+    between two poses and essentially never lands on the punch itself — measured 4/39 = 10.3 % over
+    exactly these takes. The new one (turning points of `reach`, Cartesian body space) lands on the
+    reversal itself by construction.
+
+    **Measured against detection, not against the final targets**, since `spec/intent.md` 3.2. This
+    is not a weakening of the test: `thin_targets` deliberately drops interior punches so a leg can
+    carry twice the motion (owner, 2026-09-03), so measuring the thinned set would be measuring the
+    thinning policy rather than the segmenter's ability to find a reversal — the thing this test
+    exists to protect. What thinning itself guarantees is asserted in
+    `test_thinning_keeps_the_first_and_last_punch` below.
     """
     total_punches = 0
     total_captured = 0
@@ -86,9 +95,9 @@ def test_keyframes_capture_most_punches():
     for take, _expected in EVIDENCE_TAKES:
         qpos = motion_import.load_take(MOTIONS_DIR / f"{take}.csv")
         punches = _reference_punches(qpos)
-        indices = segment.keyframe_indices(qpos)
+        _, detected = segment.keyframe_indices_with_provenance(qpos)
         captured = sum(
-            any(abs(int(p) - int(k)) <= CAPTURE_TOLERANCE_FRAMES for k in indices) for p in punches
+            any(abs(int(p) - int(k)) <= CAPTURE_TOLERANCE_FRAMES for k in detected) for p in punches
         )
         per_take[take] = (captured, len(punches))
         total_punches += len(punches)
@@ -102,6 +111,23 @@ def test_keyframes_capture_most_punches():
     # No single take may collapse even if the aggregate clears the floor.
     for take, (captured, punches) in per_take.items():
         assert captured / punches >= 0.5, f"{take}: only {captured}/{punches} punches captured"
+
+
+def test_thinning_keeps_the_first_and_last_punch():
+    """What thinning guarantees, as opposed to what detection guarantees.
+
+    Interior punches may be dropped — that is the point, and it is what buys a leg twice the motion
+    — but a combination's signature opening and closing strike must survive into the targets a plan
+    is actually aimed at (owner, 2026-09-03).
+    """
+    for take, _expected in EVIDENCE_TAKES:
+        qpos = motion_import.load_take(MOTIONS_DIR / f"{take}.csv")
+        detected, punches = segment.keyframe_indices_with_provenance(qpos)
+        assert punches, take
+        targets = set(segment.thin_targets(detected, punches))
+        ordered = sorted(punches)
+        assert ordered[0] in targets, f"{take}: the first punch was thinned away"
+        assert ordered[-1] in targets, f"{take}: the last punch was thinned away"
 
 
 def test_turning_points_finds_a_local_maximum():
@@ -165,12 +191,14 @@ def test_keyframes_respect_the_minimum_gap():
     assert np.all(indices >= 0) and np.all(indices < len(qpos))
 
 
-def test_every_leg_is_plannable():
-    """Densification's contract: no gap exceeds what MotionBricks can plan in one go."""
+def test_every_leg_is_reachable():
+    """Densification's contract. Since `spec/intent.md` 3.2 a leg is no longer one plan - a long one
+    runs an untargeted phase and then a landing in-between - so the bound is the maximum *leg*,
+    `MAX_TARGET_LEG_FRAMES`, not the maximum plan."""
     for path in sorted(MOTIONS_DIR.glob("*.csv")):
         gaps = np.diff(segment.keyframe_indices(motion_import.load_take(path)))
         assert np.all(gaps >= MIN_KEYFRAME_GAP_FRAMES), path.name
-        assert np.all(gaps <= MAX_LEG_FRAMES), path.name
+        assert np.all(gaps <= MAX_TARGET_LEG_FRAMES), path.name
 
 
 def test_keyframes_are_deterministic():
@@ -199,9 +227,11 @@ def test_combination_runs_are_bounded_and_ordered():
     indices = np.arange(0, 14 * MIN_KEYFRAME_GAP_FRAMES, MIN_KEYFRAME_GAP_FRAMES)
     runs = segment.combination_runs(indices)
     for run in runs:
-        assert 3 <= len(run) <= 6
+        assert COMBINATION_MIN_KEYFRAMES <= len(run) <= COMBINATION_MAX_KEYFRAMES
         assert list(run) == sorted(run)
-    assert sum(len(r) for r in runs) <= len(indices)
+    # Even distribution keeps every keyframe: nothing is dropped as a short trailing group any more.
+    assert sum(len(r) for r in runs) == len(indices)
+    assert [i for run in runs for i in run] == list(indices)
 
 
 def test_leg_tokens_are_within_the_planner_bounds():
@@ -223,7 +253,7 @@ def test_leg_tokens_rejects_a_gap_below_the_minimum():
 
 def test_leg_tokens_rejects_a_gap_above_the_maximum():
     with pytest.raises(segment.SegmentError, match="longer than"):
-        segment.leg_tokens([MAX_LEG_FRAMES + 1])
+        segment.leg_tokens([MAX_TARGET_LEG_FRAMES + 1])
 
 
 def test_every_take_tokenises():

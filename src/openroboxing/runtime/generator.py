@@ -269,9 +269,17 @@ class GeneratorIntent:
         target_heading: optional heading in radians to accompany ``target_position``.
         pose: optional authored key pose the generation should reach. ``None`` leaves the target
             pose to the clip library, which is upstream's behaviour.
-        horizon_tokens: how long the generated move may run, in tokens. ``None`` leaves the clip's
-            own allowance untouched, which is what the runtime asks for since ``spec/intent.md``
-            2.0 — the model picks its own length by argmax.
+        horizon_tokens: how long the generated move may run, in tokens. Since ``spec/intent.md``
+            3.0 the runtime forces each leg to its recorded duration
+            (:meth:`~openroboxing.runtime.sequence.CombinationRunner.intent_for` passes
+            ``leg.horizon_tokens``). ``None`` leaves the clip's own allowance untouched — the model
+            picks its own length by argmax — which only the opening stance and the tools still ask
+            for.
+        replan: whether the reference stream should ask the generator to plan on this frame at all.
+            ``False`` means the hole between the context and the pinned keyframe is shorter than
+            ``MIN_TOKENS``, the shortest plan the model can produce — there is nothing left to fill,
+            and re-filling would only push the keyframe past its own boundary. See
+            :meth:`~openroboxing.runtime.sequence.CombinationRunner.intent_for`.
     """
 
     style: str = "walk_boxing"
@@ -281,6 +289,7 @@ class GeneratorIntent:
     target_heading: float | None = None
     pose: object | None = None  # PoseRecord; typed loosely to keep studio out of the runtime import
     horizon_tokens: int | None = None
+    replan: bool = True
 
 
 class MotionBricksGenerator:

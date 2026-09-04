@@ -21,7 +21,9 @@ def library():
 
 
 def test_every_record_loads_and_validates(library):
-    assert len(library) == 130
+    # 174 since `spec/intent.md` 3.2 rebuilt the library on sparse targets: combinations are 2-3
+    # keyframes instead of 3-6, so the same corpus yields more of them, each carrying longer legs.
+    assert len(library) == 174
 
 
 def test_names_are_unique(library):

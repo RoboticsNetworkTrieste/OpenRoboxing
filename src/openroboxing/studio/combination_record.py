@@ -1,6 +1,6 @@
 """The combination record: load, validate, save (M5-T7).
 
-Implements ``spec/combination.md`` v0.1.
+Implements ``spec/combination.md`` v0.2.
 
 Conventions
 -----------
@@ -28,7 +28,7 @@ from openroboxing.runtime.conventions import G1, G1Conventions, quat_wxyz_to_yaw
 from openroboxing.spec.constants import (
     COMBINATION_MAX_KEYFRAMES,
     COMBINATION_MIN_KEYFRAMES,
-    MAX_TOKENS,
+    MAX_TARGET_LEG_TOKENS,
     MIN_TOKENS,
     SECONDS_PER_TOKEN,
     TICK_HZ,
@@ -36,7 +36,13 @@ from openroboxing.spec.constants import (
 from openroboxing.studio import segment
 from openroboxing.studio.pose_record import ADMISSION_STATES
 
-SCHEMA_VERSION = "0.1"
+SCHEMA_VERSION = "0.2"
+"""Bumped from 0.1 at `spec/intent.md` 3.2. The *fields* are unchanged, but the constraints on them
+are not: a combination is 2-3 keyframes rather than 3-6, and `leg_tokens` runs to
+`MAX_TARGET_LEG_TOKENS` rather than `MAX_TOKENS`. A 0.1 record is therefore not loadable as a 0.2
+one, and the version check is what says so plainly instead of letting validation report a confusing
+"6 keyframes, expected 2-3".
+"""
 
 
 class CombinationError(ValueError):
@@ -176,10 +182,13 @@ def validate(record: CombinationRecord) -> None:
         else:
             if keyframe.leg_tokens is None:
                 raise CombinationError(f"{record.name} keyframe {i}: leg_tokens is required")
-            if not MIN_TOKENS <= keyframe.leg_tokens <= MAX_TOKENS:
+            # MAX_TARGET_LEG_TOKENS, not MAX_TOKENS: since `spec/intent.md` 3.2 a leg is no longer
+            # one plan, so the planner's per-plan maximum does not bound it. A long leg runs an
+            # untargeted phase and then a landing in-between (`runtime/sequence.py`).
+            if not MIN_TOKENS <= keyframe.leg_tokens <= MAX_TARGET_LEG_TOKENS:
                 raise CombinationError(
                     f"{record.name} keyframe {i}: leg_tokens {keyframe.leg_tokens} outside "
-                    f"[{MIN_TOKENS}, {MAX_TOKENS}]"
+                    f"[{MIN_TOKENS}, {MAX_TARGET_LEG_TOKENS}]"
                 )
 
 
@@ -260,12 +269,18 @@ def build_from_take(
         take_name: the take's stem, used for provenance and for naming.
         qpos: ``(N, 36)`` MuJoCo qpos at ``GENERATOR_HZ``, from ``motion_import.load_take``.
 
-    Every leg is plannable by construction: :func:`segment.keyframe_indices` densifies any gap too
-    long for one plan, so there is no splitting and no repeated keyframe here. A run whose legs
-    cannot be tokenised raises rather than being dropped, because a silently skipped combination is a
-    silently smaller library (`CLAUDE.md` invariant 5).
+    Every leg is **reachable** by construction: :func:`segment.keyframe_indices_with_provenance`
+    densifies any gap longer than ``MAX_TARGET_LEG_FRAMES``, and a leg longer than one plan is run as
+    an untargeted phase followed by a landing in-between (``runtime/sequence.py``), so there is no
+    splitting and no repeated keyframe here. A run whose legs cannot be tokenised raises rather than
+    being dropped, because a silently skipped combination is a silently smaller library
+    (`CLAUDE.md` invariant 5).
     """
-    indices = segment.keyframe_indices(qpos, conventions=conventions)
+    # Thinned to sparse targets before grouping: `spec/intent.md` 3.2 halves the number of poses a
+    # plan is aimed at so each leg carries twice the motion. Provenance — which frames were punches —
+    # only exists at this point, because a Keyframe records angles and timing, not how it was chosen.
+    detected, punches = segment.keyframe_indices_with_provenance(qpos, conventions=conventions)
+    indices = np.array(segment.thin_targets(detected, punches), dtype=int)
     records: list[CombinationRecord] = []
     for position, run in enumerate(segment.combination_runs(indices)):
         origin = int(run[0])

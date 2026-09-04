@@ -1,4 +1,4 @@
-"""CombinationRecord: validation and JSON round trip. Implements spec/combination.md 0.1."""
+"""CombinationRecord: validation and JSON round trip. Implements spec/combination.md 0.2."""
 
 from __future__ import annotations
 
@@ -66,8 +66,10 @@ def test_first_keyframe_must_sit_at_the_origin():
 
 
 def test_rejects_too_few_keyframes():
+    # One keyframe is a pose, not a combination: there is no leg, so nothing to in-between.
+    # Two became legal at `spec/intent.md` 3.2 — a single long leg is a combination now.
     with pytest.raises(cr.CombinationError, match="keyframes"):
-        make(keyframes=make().keyframes[:2])
+        make(keyframes=make().keyframes[:1])
 
 
 def test_rejects_a_missing_joint():

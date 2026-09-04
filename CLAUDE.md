@@ -69,12 +69,12 @@ Violating any of these is a design regression, not a shortcut:
 | Intent queue service | **30 Hz** | server-side queue processing |
 | Ring stream to clients | **30 FPS** | display only |
 | Commit horizon (default) | **30 ticks = 0.6 s** | per-match parameter; a floor, not a gap between queued moves |
-| Plan length | **the leg's recorded duration**, 6–16 tokens | forced since `spec/intent.md` 3.0 — a combination lasts as long as its recording |
+| Plan length | **the hole left to the next keyframe**, 6–16 tokens | `ceil(boundary − tick)` since `spec/intent.md` 3.2; the keyframe is pinned in absolute time, so this shrinks as it is approached |
 | Combination style | **`walk_boxing`** | the only clip allowing 6–16 tokens; `walk` caps at 11 |
-| Leg | **0.8–2.13 s** | `MIN_TOKENS`–`MAX_TOKENS` × 4 frames at 30 Hz |
-| Combination | **3–6 keyframes, 2.4–7.6 s** | measured over the 130-record v0.2 library |
+| Leg | **0.8–3.2 s** | `MIN_TOKENS`–`MAX_TARGET_LEG_TOKENS` × 4 frames at 30 Hz. **A leg is not a plan**: 39 % are longer than one, and run untargeted then land |
+| Combination | **2–3 keyframes, 0.93–6.0 s** | measured over the 174-record v0.2 library, median 3.87 s; median leg 15 tokens (2.00 s) |
 | Move end | **`commit_at + duration_ticks`** | known when it starts — `spec/intent.md` 3.0 |
-| Drift gain | **0.803** | the generator covers this fraction of a commanded residual; `warp.py` divides by it |
+| Drift gain | **0.935** | the generator covers this fraction of a commanded residual; `warp.py` divides by it. Re-measured 2026-09-03 under the pinned-keyframe schedule; the +/-0.10 consistency bar is not met — see docs/perf/2026-09-03-drift-gain-pinned.md |
 | Sustained walk | **0.83 m/s** | measured; validates a player's placement at issue time only |
 
 ---
@@ -96,9 +96,9 @@ src/openroboxing/
   parity/        observation parity harness vs the C++ reference (M1)
   runtime/
     intents.py   timeline and commit queue; a commit is a combination (spec/intent.md 3.0)
-    sequence.py  CombinationRunner: which leg is live at a tick, and its intent (M6)
+    sequence.py  CombinationRunner: which leg is live at a tick, and the pinned-keyframe horizon
     generator.py MotionBricks wrapper: intents -> qpos @30 Hz, and P0 installed at runtime
-    reference.py the reference stream, and THE COMMITTED-PLAN RULE (one implementation only)
+    reference.py the reference stream: pull, resample, stay ahead of the tick; the ambient replan cadence
     bridge.py    qpos -> policy inputs: name-derived remap, 30->50 Hz, velocities
     obs.py       observation assembly (the risky part — see parity/)
     policy.py    GEAR-SONIC via ONNX Runtime; effort limits read from the model
@@ -111,12 +111,13 @@ src/openroboxing/
     match.py     rounds, clock, knockdowns, the record. Rules live here and nowhere else.
     replay.py    play a record back: re-derive the rules, or render it
   studio/        pose authoring, telegraph, regression gate (S-T3)
-                 motion_import.py + segment.py + combination_record.py build the library (M5)
+                 motion_import.py + segment.py + combination_record.py build the library (M5);
+                 segment.thin_targets selects the sparse targets a plan is aimed at (3.2)
   client/        ring client, fight-night screen, Pose Studio (all vanilla, no build step)
   server/        match host, protocol, agent API, Studio API
   league/        scoring, Glicko-2, Swiss pairing, season, freeze manifest
   poses/         pose library (data, versioned) · dev/ holds Studio drafts
-                 v0.1/ single key poses · v0.2/combinations/ the 136 built combinations (M5)
+                 v0.1/ single key poses · v0.2/combinations/ the 174 built combinations
   tools/         CLI entrypoints — `python -m openroboxing.tools.<name>`
 tests/           unit + golden tests, fixtures under tests/fixtures/
 docs/            ASSUMPTIONS.md (every decision taken that was really the owner's),

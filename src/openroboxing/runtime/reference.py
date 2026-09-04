@@ -1,8 +1,18 @@
 """A fighter's reference motion: generator frames pulled, resampled, kept ahead of the tick.
 
 Extracted from :mod:`openroboxing.runtime.world` when the two-fighter match loop needed the same
-thing per fighter. There is now **one path**: pull a frame, and replan at the ambient
-:data:`REPLAN_DT` cadence whatever the intent says. The stream needs no idea what a commit is.
+thing per fighter. There is **one path**: pull a frame, and replan at the ambient :data:`REPLAN_DT`
+cadence. Nothing is ever forced. The stream needs no idea what a commit is.
+
+The one thing an intent may withhold is the replan itself
+---------------------------------------------------------
+Since ``spec/intent.md`` 3.2 a :class:`~openroboxing.runtime.generator.GeneratorIntent` carries a
+``replan`` flag, and this module skips the ``generate`` call when it is ``False``. That is *not* a
+second path: the cadence and ``force=False`` are unchanged, and a call that is made is made exactly
+as before. It exists because a keyframe is pinned in absolute time — once the hole in front of it is
+shorter than ``MIN_TOKENS``, no plan that short exists and re-filling would push the keyframe past
+its own boundary. Which frames those are is a question about legs, which the runner owns and this
+module deliberately does not.
 
 Why there is no forced-plan rule any more
 -----------------------------------------
@@ -131,7 +141,11 @@ class ReferenceStream:
 
             intent = intent_at(self.tick_of_frame(len(self._frames)))
             self._frames.append(self.generator.next_frame())
-            self._plan(intent, force=False)
+            # A leg whose remaining hole is shorter than the shortest plan the model can produce has
+            # nothing left to fill; replanning would only re-aim its keyframe past its own boundary.
+            # The stream still knows nothing about legs — the intent carries the decision.
+            if intent.replan:
+                self._plan(intent, force=False)
 
         self.motion = resample_qpos(
             np.asarray(self._frames), source_hz=GENERATOR_HZ, target_hz=TICK_HZ

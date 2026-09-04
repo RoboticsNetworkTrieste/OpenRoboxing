@@ -46,6 +46,35 @@ const REJECTED_COLOUR = 0xffa53d;
 /* Scratch for `project`, so the render loop allocates nothing. */
 const PROJECTED = new THREE.Vector3();
 
+/* ---- the orbit camera -------------------------------------------------------------------------- */
+/* What the camera looks at: the ring's middle at roughly a fighter's head height. Orbiting turns
+ * about this point, so it is what stays put on screen while the view moves. */
+const LOOK_HEIGHT_M = 0.9;
+
+/* Side-on from -y, which is where the broadcast camera has always stood (`runtime/arena.py`). */
+const DEFAULT_AZIMUTH = -Math.PI / 2;
+
+/* A full drag across a 1000 px canvas turns the ring most of the way round — fast enough to get
+ * behind a fighter in one gesture, slow enough to trim an angle by a few degrees. */
+const ORBIT_RAD_PER_PX = 0.005;
+
+/* Elevation is clamped short of both poles. At the top the camera's up-vector and its view
+ * direction become parallel and `lookAt` has no unique answer, which reads on screen as the ring
+ * snapping round; at the bottom you are under the floor looking up at nothing. */
+const MIN_ELEVATION_RAD = 0.05;
+const MAX_ELEVATION_RAD = Math.PI / 2 - 0.05;
+
+/* Near enough to read a glove, far enough to see both corners and the queue's whole path. */
+const MIN_DISTANCE_M = 1.5;
+const MAX_DISTANCE_M = 24.0;
+
+/* Below this much pointer travel a gesture was a click, not an orbit. See `Ring.wasDragged`. */
+const CLICK_SLOP_PX = 4;
+
+/* Per unit of `wheel.deltaY`. Small because a notch is ~100 units in `deltaMode: PIXEL`, which
+ * makes one notch about a 10 % change. */
+const ZOOM_PER_WHEEL_UNIT = 0.001;
+
 function setQuat(object, w, x, y, z) {
   object.quaternion.set(x, y, z, w);
 }
@@ -140,8 +169,169 @@ export class Ring {
 
     this.tick = 0;
     this.expectedBodies = 0;
+
+    /* Where the camera sits, in spherical coordinates about `target`. `frameRing` seeds these from
+       the arena and `_applyOrbit` is the only thing that ever writes `camera.position`, so the view
+       has exactly one source of truth however it got moved. */
+    this.orbit = {
+      azimuth: DEFAULT_AZIMUTH,
+      elevation: 0.0,
+      distance: 1.0,
+      target: new THREE.Vector3(0, 0, LOOK_HEIGHT_M),
+      home: null,   // the framing `frameRing` computed, so a reset needs no arena to re-read
+    };
+
+    /* How far the pointer travelled during the most recent gesture, in CSS pixels. A page that also
+       *clicks* on the canvas reads this to tell a click from the end of a drag — see `wasDragged`. */
+    this.lastDragPx = 0;
+
     this._addLights();
+    this._bindOrbit();
     window.addEventListener('resize', () => this.resize());
+  }
+
+  /* ---- orbiting -------------------------------------------------------------------------------- */
+  /* Drag to orbit, wheel to zoom, double-click to go back to the broadcast view.
+   *
+   * On the mouse rather than on keys because the keyboard is fully spoken for: in hotseat two
+   * players share it, and between them they already own a 3x3 picker, two page keys, four drive
+   * keys, commit and clear (`app.js`'s SEATS). The mouse is otherwise unused — the ghost is driven
+   * by keys, not by pointing — so nothing had to be given up for this.
+   *
+   * Hand-rolled rather than vendoring three's OrbitControls: the whole behaviour is the forty lines
+   * below, and `client/` is deliberately vanilla with no build step (`CLAUDE.md`).
+   */
+  _bindOrbit() {
+    let dragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    /* Set here rather than in a stylesheet **because it is part of the behaviour, not part of the
+       look**. Without it a browser claims a drag for scrolling or pinch-zooming and fires
+       `pointercancel` instead of `pointermove`, so orbiting silently does nothing — and it does that
+       on exactly the devices least likely to be tested on. Every page that builds a Ring gets it,
+       which is the point: `sparring.html` loads a different stylesheet from `index.html` and had no
+       such rule, so the camera it shares with the ring client would not turn. */
+    this.canvas.style.touchAction = 'none';
+    /* A canvas is draggable content as far as the browser is concerned. Left alone, pressing on one
+       and moving can start a native selection or image drag, and on a trackpad that is what happens
+       instead of a gesture — the browser takes the pointer and no `pointermove` ever arrives. */
+    this.canvas.style.userSelect = 'none';
+    this.canvas.style.webkitUserSelect = 'none';
+
+    const release = (event) => {
+      if (!dragging) return;
+      dragging = false;
+      if (this.canvas.hasPointerCapture?.(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
+      }
+    };
+
+    const move = (event) => {
+      if (!dragging) return;
+      /* The button came up somewhere we never heard about — a browser that steals the pointer
+         mid-gesture does not always send `pointerup`, and without this the drag would stay latched
+         and the ring would keep turning under a pointer that is merely passing over. */
+      if (event.buttons === 0) {
+        release(event);
+        return;
+      }
+      const dx = event.clientX - lastX;
+      const dy = event.clientY - lastY;
+      lastX = event.clientX;
+      lastY = event.clientY;
+      this.lastDragPx += Math.hypot(dx, dy);
+      /* Drag right turns the ring right; drag up lifts the camera and looks further down. Both are
+         negated because moving the *pointer* one way moves the *scene* that way, which means the
+         camera goes the other. */
+      this.orbit.azimuth -= dx * ORBIT_RAD_PER_PX;
+      this.orbit.elevation -= dy * ORBIT_RAD_PER_PX;
+      this._applyOrbit();
+    };
+
+    this.canvas.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (event.button !== 0) return;
+        /* The other half of not losing the pointer to a native drag. Registered `passive: false`
+           because a passive listener is forbidden from calling this and the browser ignores it. */
+        event.preventDefault?.();
+        dragging = true;
+        this.lastDragPx = 0;
+        lastX = event.clientX;
+        lastY = event.clientY;
+        /* Capture keeps a drag alive past the edge of the canvas. It is an optimisation, not a
+           requirement — the listeners below are on the window for exactly that reason — so a
+           browser that refuses it must not take the gesture down with it. */
+        try {
+          this.canvas.setPointerCapture?.(event.pointerId);
+        } catch {
+          /* no capture; the window listeners still see the whole drag */
+        }
+      },
+      { passive: false },
+    );
+
+    /* Move and release are watched on the **window**, not the canvas: a drag that strays outside the
+       canvas — easy to do on a trackpad, where the pointer travels further than the gesture feels —
+       would otherwise stop orbiting mid-turn and never release, leaving the next click stuck in a
+       drag. Deliberately *not* also bound to the canvas: pointer events bubble, so binding both
+       would run `move` twice per event and turn the ring at double speed.
+
+       `defaultView` is absent outside a browser (the Node harness in `tests/client/`), and there the
+       canvas stub is the event target. */
+    const view = this.canvas.ownerDocument?.defaultView ?? this.canvas;
+    view.addEventListener('pointermove', move);
+    view.addEventListener('pointerup', release);
+    view.addEventListener('pointercancel', release);
+
+    this.canvas.addEventListener(
+      'wheel',
+      (event) => {
+        /* Multiplicative, so one notch changes the view by the same *proportion* whether you are
+           close in or far out. Linear zoom crawls when far and overshoots when near. */
+        event.preventDefault();
+        this.orbit.distance *= Math.exp(event.deltaY * ZOOM_PER_WHEEL_UNIT);
+        this._applyOrbit();
+      },
+      { passive: false },
+    );
+
+    this.canvas.addEventListener('dblclick', () => this.resetView());
+  }
+
+  /* Camera position from `this.orbit`. The only writer of `camera.position`. */
+  _applyOrbit() {
+    const orbit = this.orbit;
+    orbit.elevation = Math.min(MAX_ELEVATION_RAD, Math.max(MIN_ELEVATION_RAD, orbit.elevation));
+    orbit.distance = Math.min(MAX_DISTANCE_M, Math.max(MIN_DISTANCE_M, orbit.distance));
+
+    const ground = Math.cos(orbit.elevation) * orbit.distance;
+    this.camera.position.set(
+      orbit.target.x + ground * Math.cos(orbit.azimuth),
+      orbit.target.y + ground * Math.sin(orbit.azimuth),
+      orbit.target.z + Math.sin(orbit.elevation) * orbit.distance,
+    );
+    this.camera.lookAt(orbit.target);
+  }
+
+  /* Did the gesture that just ended orbit the camera, rather than click on one spot?
+   *
+   * A browser fires `click` at the end of a drag as well as on a tap, so a page that places
+   * something where you click — `sparring.js` teleports the sacco — would place it wherever a drag
+   * happened to finish. Any such handler must ask this first. The threshold is slack for a hand that
+   * moves a pixel or two while pressing, not a real orbit: `ORBIT_RAD_PER_PX` makes 4 px about a
+   * degree, which is invisible.
+   */
+  wasDragged() {
+    return this.lastDragPx > CLICK_SLOP_PX;
+  }
+
+  /* Back to the framing `frameRing` chose — the broadcast view the round opened on. */
+  resetView() {
+    if (!this.orbit.home) return;
+    Object.assign(this.orbit, this.orbit.home);
+    this._applyOrbit();
   }
 
   _addLights() {
@@ -315,10 +505,29 @@ export class Ring {
   }
 
   /* ---- the camera ------------------------------------------------------------------------------ */
+  /* The broadcast view, and the home a double-click returns to.
+   *
+   * Expressed as an orbit rather than as a position so that the framing and the free look are the
+   * same mechanism — the camera has one source of truth (`_applyOrbit`) whether it was placed here
+   * or dragged. The numbers reproduce the fixed framing this had before orbiting existed: standing
+   * back `half + 3.4` m on the -y side, 2.6 m up, looking at the ring's middle at head height.
+   */
   frameRing(arena) {
     const half = (arena?.ring_size ?? 4.9) / 2;
-    this.camera.position.set(0, -(half + 3.4), 2.6);
-    this.camera.lookAt(0, 0, 0.9);
+    const back = half + 3.4;
+    const rise = 2.6 - LOOK_HEIGHT_M;
+
+    this.orbit.target.set(0, 0, LOOK_HEIGHT_M);
+    this.orbit.distance = Math.hypot(back, rise);
+    this.orbit.elevation = Math.atan2(rise, back);
+    this.orbit.azimuth = DEFAULT_AZIMUTH;
+    this.orbit.home = {
+      azimuth: this.orbit.azimuth,
+      elevation: this.orbit.elevation,
+      distance: this.orbit.distance,
+    };
+
+    this._applyOrbit();
     this.resize();
   }
 

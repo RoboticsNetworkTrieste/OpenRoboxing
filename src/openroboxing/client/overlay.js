@@ -8,8 +8,10 @@
  *    60 fps without touching it. Every point goes through `ring.project`, i.e. the renderer's own
  *    camera, so an annotation cannot drift from the thing it annotates.
  *
- *  - `drawMap` draws the top view. The camera is fixed and perspective hides depth, so where the
- *    ghost stands is the one thing the arena cannot show; the map exists for that and nothing else.
+ *  - `drawMap` draws the top view. Perspective hides depth, so where the ghost stands is the one
+ *    thing the arena cannot show; the map exists for that and nothing else. Since the 3-D view
+ *    orbits it does a second job it did not used to: it is the **fixed frame of reference**, the one
+ *    thing on screen that does not move when someone drags the camera.
  *
  * Neither function decides anything. They are given what the host sent plus the local ghost, and
  * they draw it.
@@ -215,8 +217,11 @@ export function drawSpectatorArena(svg, ring, seats, separation) {
 }
 
 /* ---- the top view ----------------------------------------------------------------------------------
- * MuJoCo world (x, y) with x to the right and y up the page, which is the same orientation the fixed
- * camera looks along — so a player reading the map does not have to rotate it in their head.
+ * MuJoCo world (x, y) with x to the right and y up the page. **Deliberately world-fixed, and it no
+ * longer tracks the camera** (owner, 2026-09-03): the 3-D view orbits, so a map that turned with it
+ * would leave nothing on screen holding still. World-fixed, it agrees exactly with the ghost drive
+ * keys — which are world-fixed for the same reason (`app.js`'s SEATS) — so the map is what a player
+ * reads to know which way a held key will send the ghost, whatever the camera is doing.
  */
 export function drawMap(group, view, ringHalf) {
   const toMap = (x, y) => ({
